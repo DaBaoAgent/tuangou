@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "note": "团购品牌目录。识别时用 aliases 与画面 OCR / 口播文本做规范化匹配；别名至少 2 个字符。新增品牌请补 id / name / aliases / category。verified=true 表示宝哥已确认过该品牌名。",
+  "brands": [
+    {
+      "id": "linyu_zhaji",
+      "name": "临榆炸鸡腿",
+      "aliases": [
+        "临榆炸鸡腿",
+        "临榆",
+        "LINYU"
+      ],
+      "category": "炸鸡",
+      "verified": true,
+      "stores": []
+    },
+    {
+      "id": "wallace",
+      "name": "华莱士",
+      "aliases": [
+        "华莱士",
+        "WALLACE",
+        "WAILACE"
+      ],
+      "category": "汉堡炸鸡",
+      "verified": false,
+      "stores": []
+    },
+    {
+      "id": "luckin",
+      "name": "瑞幸咖啡",
+      "aliases": [
+        "瑞幸咖啡",
+        "瑞幸",
+        "LUCKIN",
+        "LUCKINCOFFEE"
+      ],
+      "category": "咖啡",
+      "verified": false,
+      "stores": [],
+      "note": "宝哥 2026-11-01：素材库里的咖啡品牌只有瑞幸，没有库迪；读到 Cotti/库迪 一律不认"
+    },
+    {
+      "id": "yeye_bupaocha",
+      "name": "爷爷不泡茶",
+      "aliases": [
+        "爷爷不泡茶",
+        "爷爷不泡"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": []
+    },
+    {
+      "id": "mrx",
+      "name": "MR.X",
+      "aliases": [
+        "MR.X",
+        "MRX"
+      ],
+      "category": "炸物小吃",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-01 抽帧：B8E05EEA 深红底明确读到 MR.X，口播卖鸡柳+薯条+年糕三合一、秋季狂欢特大份"
+    },
+    {
+      "id": "mcdonalds",
+      "name": "麦当劳",
+      "aliases": [
+        "麦当劳",
+        "MCDONALDS",
+        "MCDONALD"
+      ],
+      "category": "汉堡炸鸡",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-01 抽帧 1440/2048 重扫：3E0A8657、FA7F65F3 画面读到 McS/McSa，口播为香辣鸡腿肉+买一送一；2026-11-02 宝哥确认 00791652 实为肯德基，说明仿品牌字会被 OCR 误读成 McS，这些读字不能证明是麦当劳，需人工/联网核验后才能发布"
+    },
+    {
+      "id": "kfc",
+      "name": "肯德基",
+      "aliases": [
+        "肯德基",
+        "KFC"
+      ],
+      "category": "汉堡炸鸡",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-02 宝哥两次更正确认：2026-11-02 15:27 发布的 11月1日_00791652.mp4 是肯德基素材。画面是仿品牌字，OCR 误读成 McS/McSa，不能只凭 OCR 判品牌；品牌不确定时须联网多搜索核验，仍不确定就跳过不发布。2026-11-02 人工复核：3E0A8657 与 00791652 同一场景同款包装、FA7F65F3 同款白底粉橙火焰包装，均为肯德基，已在各自 meta.json 标为 source=manual、confidence 0.95/0.92"
+    },
+    {
+      "id": "haoxianglai",
+      "name": "好想来",
+      "aliases": [
+        "好想来"
+      ],
+      "category": "零食",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-02 宝哥手动在成片文件名标注：好想来4、好想来6"
+    },
+    {
+      "id": "hushangayi",
+      "name": "沪上阿姨",
+      "aliases": [
+        "沪上阿姨",
+        "沪上"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-02 宝哥手动在成片文件名标注：沪上阿姨.mp4"
+    },
+    {
+      "id": "shanzhongwulaohu",
+      "name": "山中无老虎",
+      "aliases": [
+        "山中无老虎"
+      ],
+      "category": "火锅",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-02 宝哥手动标注：0C671B8E、3B1D9E6F 两条海鲜大咖蛙蛙煲为山中无老虎"
+    }
+  ],
+  "suspected": []
+}

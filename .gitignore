@@ -2,3 +2,9 @@ node_modules/
 runtime/
 .env
 *.log
+
+# 本地素材与生成产物（体积大，不入库）
+素材库/
+output/
+__pycache__/
+*.pyc

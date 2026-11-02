@@ -1,0 +1,127 @@
+{
+  "paths": {
+    "source_dir": "D:/@kaifa/tuangou/素材库/未剪素材",
+    "done_source_dir": "D:/@kaifa/tuangou/素材库/未剪素材/已剪",
+    "output_dir": "D:/@kaifa/tuangou/素材库/已剪成片",
+    "bgm_dir": "D:/BaiduSyncdisk/19 最近待办/@爱优护工厂开发/抖音最火BGM",
+    "work_dir": "D:/@kaifa/tuangou/runtime/auto-edit/work",
+    "corrections_dir": "D:/@kaifa/tuangou/runtime/auto-edit/corrections",
+    "brands_file": "D:/@kaifa/tuangou/scripts/auto-edit/brands.json",
+    "brand_override_dir": "D:/@kaifa/tuangou/runtime/auto-edit/brand_overrides",
+    "product_override_dir": "D:/@kaifa/tuangou/runtime/auto-edit/product_overrides",
+    "brand_index_file": "D:/@kaifa/tuangou/runtime/auto-edit/brand_index.json",
+    "font_dir": "D:/@kaifa/tuangou/runtime/asr-models",
+    "font_file": "NotoSansSC-Bold.otf",
+    "fw_model_dir": "D:/@kaifa/tuangou/runtime/fw-models",
+    "fw_model": "deepdml/faster-whisper-large-v3-turbo-ct2"
+  },
+  "video": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "codec": "libx265",
+    "crf": 20,
+    "preset": "medium",
+    "audio_bitrate": "192k",
+    "audio_rate": 44100
+  },
+  "subtitle": {
+    "font_name": "Noto Sans SC",
+    "font_bold": 1,
+    "font_size": 112,
+    "outline": 3.2,
+    "shadow": 0,
+    "max_width": 1000,
+    "max_chars": 12,
+    "min_chars": 4,
+    "min_duration": 0.8,
+    "margin_v": 552,
+    "fill": "FFFFFF",
+    "outline_color": "000000",
+    "skip_if_legacy": true
+  },
+  "opening_fx": {
+    "enabled": true,
+    "duration": 0.6,
+    "line_count": 150,
+    "accent_lines": 20,
+    "seed": 20261101,
+    "center_x_ratio": 0.5,
+    "center_y_ratio": 0.44,
+    "inner_rx": 330,
+    "inner_ry": 560,
+    "sfx_volume": 0.62,
+    "sfx_duration": 0.9,
+    "sfx_peak": 0.85
+  },
+  "audio": {
+    "voice_volume": 1.0,
+    "bgm_volume": 0.16,
+    "fade_in": 0.3,
+    "fade_out": 0.8,
+    "limiter": 0.95
+  },
+  "legacy_sub": {
+    "enabled": true,
+    "sample_fps": 2,
+    "min_score": 0.3,
+    "min_height_720": 24,
+    "max_height_720": 110,
+    "pad": 9,
+    "color": "black"
+  },
+  "brand_ocr": {
+    "enabled": true,
+    "sample_fps": 1,
+    "scale_width": 1080,
+    "retry_scale_width": 1440,
+    "max_side_len": 2048,
+    "min_ocr_score": 0.5,
+    "min_confidence": 0.8,
+    "fuzzy_threshold": 0.8
+  },
+  "asr": {
+    "language": "zh",
+    "compute_type": "int8",
+    "beam_size": 5,
+    "initial_prompt": "抖音团购带货短视频，姐妹们宝子们，好吃好喝，炸鸡汉堡咖啡奶茶，优惠团购链接，赶紧下单，越吃越香，酥酥脆脆，入口即化，太上头了"
+  },
+  "bgm": {
+    "default": "轻快悠闲.mp3",
+    "rules": [
+      {
+        "words": [
+          "炸鸡",
+          "汉堡",
+          "炸",
+          "美食",
+          "好吃",
+          "酥脆"
+        ],
+        "track": "轻快活泼愉快口哨.mp3"
+      },
+      {
+        "words": [
+          "咖啡",
+          "奶茶",
+          "饮品",
+          "茶",
+          "喝",
+          "饮品"
+        ],
+        "track": "夏日气泡水.mp3"
+      },
+      {
+        "words": [
+          "海鲜",
+          "火锅",
+          "聚餐"
+        ],
+        "track": "夏日慢时光.mp3"
+      }
+    ]
+  },
+  "naming": {
+    "date_format": "%-m月%-d日"
+  }
+}

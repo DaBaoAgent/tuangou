@@ -1,0 +1,41 @@
+{
+  "paths": {
+    "video_dir": "D:/@kaifa/tuangou/素材库/已剪成片",
+    "published_dir": "D:/@kaifa/tuangou/素材库/已剪成片/已发",
+    "work_dir": "D:/@kaifa/tuangou/runtime/publish",
+    "auto_edit_work": "D:/@kaifa/tuangou/runtime/auto-edit/work",
+    "brand_index": "D:/@kaifa/tuangou/runtime/auto-edit/brand_index.json",
+    "profile_dir": "D:/@kaifa/tuangou/runtime/browser-profile"
+  },
+  "schedule": {
+    "window": { "start": "09:00", "end": "22:30" },
+    "ramp": [
+      { "day": 1, "count": 2 },
+      { "day": 2, "count": 4 },
+      { "day": 3, "count": 6 },
+      { "day": 4, "count": 8 }
+    ],
+    "steady_min": 8,
+    "steady_max": 12,
+    "min_gap_minutes": 25,
+    "start_date": "2026-11-01"
+  },
+  "copy": {
+    "max_title": 30,
+    "max_desc": 1000,
+    "topics_min": 3,
+    "topics_max": 5
+  },
+  "publish": {
+    "ai_declaration": true,
+    "add_location": true,
+    "location_fallback": "skip",
+    "brand_min_confidence": 0.9,
+    "verify_after_publish": true,
+    "max_retries": 2
+  },
+  "notify": {
+    "wechat": true,
+    "wechat_push_script": "C:/Users/20200/.claude/channels/weixin/push.mjs"
+  }
+}
