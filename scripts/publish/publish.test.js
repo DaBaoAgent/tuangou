@@ -62,6 +62,25 @@ test('文案：ASR 同音错字不落到标题和描述', () => {
   assert.ok(text.includes('第一口') || text.includes('买一送一'));
 });
 
+test('文案：螺蛳粉、鲜芋奶绿与品牌名同音错字不落地', () => {
+  const v = {
+    file: 'g10.mp4', brand: '柳州肥姨妈大骨螺蛳粉', category: '粉面',
+    lines: [
+      '柳州肥伊麻大骨螺蛳粉的原味螺蛳粉甜品套餐',
+      '缩完粉粉来寄来一口套餐',
+      '索完再来口甜品',
+      '双倍鲜鱼奶绿香到我',
+      '双倍鲜玉奶绿玉香',
+    ],
+  };
+  const c = L.buildCopy(v, { used_title_suffix: [] });
+  const text = `${c.title}\n${c.desc}`;
+  assert.ok(!/肥伊麻|缩完粉|索完|螺丝|鲜鱼奶绿|鲜玉奶绿/.test(text), text);
+  assert.ok(text.includes('肥姨妈') || text.includes('螺蛳粉'), text);
+  assert.ok(text.includes('鲜芋奶绿') || text.includes('嗦完'), text);
+  assert.equal(L.copyClean(c), true);
+});
+
 test('文案：片尾寒暄与低俗 ASR 不进描述', () => {
   const v = {
     file: 'g2.mp4', brand: '瑞幸咖啡', category: '咖啡',
@@ -126,7 +145,11 @@ test('文案：断句碎片与半截标题会被丢弃', () => {
   assert.ok(!text.includes('的快乐谁能拒绝'), text);
   assert.equal(L.copyClean(c), true);
 
-  const bad = { title: '量真的有点狠现在戳链，你顶得住吗？', desc: '...，手慢真的无。' };
+  // 「手慢真的无」是正常口播卖点，不能当成断句坏掉
+  const okEnding = { title: '外酥里嫩的炸鸡腿来了', desc: '...，手慢真的无。' };
+  assert.equal(L.copyClean(okEnding), true);
+
+  const bad = { title: '量真的有点狠现在戳链，你顶得住吗？', desc: '...，见。' };
   assert.equal(L.copyClean(bad), false);
 });
 
@@ -162,6 +185,47 @@ test('文案：低俗词、控制字符、换行与纯标点标题一律不通�
   assert.equal(L.copyClean({ title: '！？！！，。？', desc }), false);
   assert.equal(L.copyClean({ title: '鸡腿香\u0000脆，看饿了没？', desc }), false);
   assert.equal(L.copyClean({ title: '外皮酥脆到掉渣，你顶得住吗？', desc }), true);
+});
+
+test('文案：鸡柳大人、临榆炸鸡腿、三合一同音错字不落地', () => {
+  const a = L.buildCopy({
+    file: 'g11.mp4', brand: '鸡柳大人', category: '炸物小吃',
+    product: '炸物三合一（鸡柳+薯条+年糕）',
+    lines: ['姬鲁大人这个三哈盒真的太适合嘴馋的时候来一份', '年糕诺鸡鸡薯条脆生生', '鸡柳大人三合鹅'],
+  }, { used_title_suffix: [] });
+  const ta = `${a.title}\n${a.desc}`;
+  assert.ok(!/姬鲁|三哈盒|三合鹅|年糕诺/.test(ta), ta);
+  assert.ok(ta.includes('鸡柳大人') && ta.includes('三合一'), ta);
+
+  const b = L.buildCopy({
+    file: 'g12.mp4', brand: '临榆炸鸡腿', category: '炸鸡', product: '脆皮手枪腿',
+    lines: ['淋鱼炸鸡腿的脆皮手香腿', '铃银炸腿的脆皮手腔腿', '腊味够近还不腻', '谢谢大家'],
+  }, { used_title_suffix: [] });
+  const tb = `${b.title}\n${b.desc}`;
+  assert.ok(!/淋|铃银|手香腿|手腔腿|腊味够近|谢谢大家/.test(tb), tb);
+  assert.ok(tb.includes('临榆炸鸡腿') && tb.includes('手枪腿'), tb);
+  assert.equal(L.copyClean(b), true);
+
+  // 「01炸鸡腿」不能拿进标题；跨行断开的「赶 + 紧贴链接」要拼成「赶紧戳链接」
+  const c = L.buildCopy({
+    file: 'g13.mp4', brand: '临榆炸鸡腿', category: '炸鸡', product: '脆皮手枪腿',
+    lines: ['01炸鸡腿的脆皮手腔腿', '外皮真的特别酥肉也很嫩'],
+  }, { used_title_suffix: [] });
+  assert.ok(!c.title.includes('01'), c.title);
+  assert.ok(c.title.includes('临榆炸鸡腿'), c.title);
+
+  const d = L.buildCopy({
+    file: 'g14.mp4', brand: '鸡柳大人', category: '炸物小吃',
+    product: '炸物三合一（鸡柳+薯条+年糕）',
+    lines: ['这个招牌三合一特大份', '想尝这一口的赶', '紧贴链接安排上',
+      '嘴馋想吃小食就车链，接安排这一杯',
+      '这一杯就车链接安排这一杯就车链接安排这两杯就车链接安排这一杯'],
+  }, { used_title_suffix: [] });
+  const td = `${d.title}\n${d.desc}`;
+  assert.ok(!/紧贴链接|车链/.test(td), td);
+  assert.ok(td.includes('赶紧戳链接') && td.includes('戳链接安排'), td);
+  // ASR 循环复读整句丢弃，CTA 只保留一遍
+  assert.equal((td.match(/就戳链接安排/g) || []).length, 1, td);
 });
 
 test('排期：压缩窗口放不下时宁可少发，也不重复同一分钟', () => {

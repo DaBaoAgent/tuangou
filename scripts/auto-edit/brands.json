@@ -64,6 +64,18 @@
       "note": "2026-11-01 抽帧：B8E05EEA 深红底明确读到 MR.X，口播卖鸡柳+薯条+年糕三合一、秋季狂欢特大份"
     },
     {
+      "id": "jiliu_daren",
+      "name": "鸡柳大人",
+      "aliases": [
+        "鸡柳大人",
+        "姬鲁大人"
+      ],
+      "category": "炸物小吃",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 抽帧：红色手提袋、桶身与门店招牌大字均为「鸡柳大人」，招牌产品为鸡柳+年糕+薯条三合一；口播 ASR 误读成「姬鲁大人」。包装上的小字 MR 会被 OCR 误配成 MR.X，不能据此判品牌"
+    },
+    {
       "id": "mcdonalds",
       "name": "麦当劳",
       "aliases": [
@@ -86,7 +98,7 @@
       "category": "汉堡炸鸡",
       "verified": false,
       "stores": [],
-      "note": "2026-11-02 宝哥两次更正确认：2026-11-02 15:27 发布的 11月1日_00791652.mp4 是肯德基素材。画面是仿品牌字，OCR 误读成 McS/McSa，不能只凭 OCR 判品牌；品牌不确定时须联网多搜索核验，仍不确定就跳过不发布。2026-11-02 人工复核：3E0A8657 与 00791652 同一场景同款包装、FA7F65F3 同款白底粉橙火焰包装，均为肯德基，已在各自 meta.json 标为 source=manual、confidence 0.95/0.92"
+      "note": "2026-11-02 宝哥两次更正确认：2026-11-02 15:27 发布的 11月1日_00791652.mp4 是肯德基素材。画面是仿品牌字，OCR 误读成 McS/McSa，不能只凭 OCR 判品牌；品牌不确定时须联网多搜索核验，仍不确定就跳过不发布。2026-11-02 人工复核：3E0A8657 与 00791652 同一场景同款包装，均为肯德基，已在各自 meta.json 标为 source=manual、confidence 0.95/0.92；FA7F65F3 后经宝哥 2026-11-04 在成片名标注为「鸡柳大人」，以最新人工标注为准"
     },
     {
       "id": "haoxianglai",
@@ -121,6 +133,150 @@
       "verified": false,
       "stores": [],
       "note": "2026-11-02 宝哥手动标注：0C671B8E、3B1D9E6F 两条海鲜大咖蛙蛙煲为山中无老虎"
+    },
+    {
+      "id": "coco_duke",
+      "name": "CoCo都可",
+      "aliases": [
+        "CoCo都可",
+        "COCO都可",
+        "coco都可",
+        "都可",
+        "COCO"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-03 宝哥手动在成片文件名标注：CoCo都可；未认证，发布挂门店但不挂品牌话题"
+    },
+    {
+      "id": "guming",
+      "name": "古茗",
+      "aliases": [
+        "古茗",
+        "GUMING"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-03 宝哥手动在成片文件名标注：古茗；未认证，发布挂门店但不挂品牌话题"
+    },
+    {
+      "id": "chabaidao",
+      "name": "茶百道",
+      "aliases": [
+        "茶百道",
+        "CHABAIDAO"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-03 宝哥手动在成片文件名标注：茶百道；未认证，发布挂门店但不挂品牌话题"
+    },
+    {
+      "id": "feiyima_luosifen",
+      "name": "柳州肥姨妈大骨螺蛳粉",
+      "aliases": [
+        "柳州肥姨妈大骨螺蛳粉",
+        "肥姨妈螺蛳粉",
+        "肥姨妈",
+        "柳州肥姨妈"
+      ],
+      "category": "粉面",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 宝哥确认：画面墙上招牌《柳州肥姨妈大骨螺蛳粉》+ 口播；品牌未认证门店"
+    },
+    {
+      "id": "molly_tea",
+      "name": "茉莉奶白",
+      "aliases": [
+        "茉莉奶白",
+        "MOLLY TEA",
+        "MOLLYTEA"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 百度同步批次：画面英文 MOLLY TEA + 口播「茉莉奶白」；AI 素材烧录字幕误写成莱利/菜利奶白"
+    },
+    {
+      "id": "dongfang_molan",
+      "name": "东方墨兰",
+      "aliases": [
+        "东方墨兰",
+        "东方莫兰",
+        "莫兰",
+        "MOLANDA",
+        "MOLAND"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 百度批次：官网 molantea.com（南京）；画面英文 MOLANDA；口播/烧录字幕有「东方莫兰」错写"
+    },
+    {
+      "id": "tamkoko",
+      "name": "泰柯茶园",
+      "aliases": [
+        "泰柯茶园",
+        "TamKoKo",
+        "Tamkoko",
+        "TAMKOKO",
+        "泰柯"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 百度批次：官网 tamkoko-thaitea.com；画面英文 TamKoKo；ASR 常错成泰柯塔园/泰阿茶园"
+    },
+    {
+      "id": "benjie",
+      "name": "笨姐就是火辣",
+      "aliases": [
+        "笨姐就是火辣",
+        "笨姐",
+        "火辣火锅"
+      ],
+      "category": "火锅",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 百度批次：素材文件名与口播均为「笨姐就是火辣」"
+    },
+    {
+      "id": "chagee",
+      "name": "霸王茶姬",
+      "aliases": [
+        "霸王茶姬",
+        "CHAGEE"
+      ],
+      "category": "茶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 百度批次：素材文件名「霸王茶姬11」"
+    },
+    {
+      "id": "ziguangyuan",
+      "name": "紫光园",
+      "aliases": [
+        "紫光园"
+      ],
+      "category": "酸奶",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 百度批次：口播「京城奶皮子」；京城奶皮子酸奶为紫光园招牌产品（新华网/下厨房报道），但没有画面证据时不自动把产品名当品牌"
+    },
+    {
+      "id": "lanxiong_xiannai",
+      "name": "兰熊鲜奶",
+      "aliases": [
+        "兰熊鲜奶",
+        "兰熊"
+      ],
+      "category": "奶饮",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-04 宝哥在百度同步盘「品牌待确认」目录手动标注：4 条京城奶皮子成片为兰熊鲜奶"
     }
   ],
   "suspected": []

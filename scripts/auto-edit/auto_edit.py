@@ -52,8 +52,8 @@ def log(msg):
     print(f"[auto-edit] {msg}", flush=True)
 
 
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8") as f:
+def load_config(path=None):
+    with open(path or CONFIG_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -112,7 +112,12 @@ def find_clips(cfg, pattern=None, select_all=False):
         return clips
     if pattern:
         key = pattern.lower()
-        hits = [p for p in clips if key in p.stem.lower()]
+        # 先做精确匹配，避免「11111」同时命中「1111111111」
+        exact = [p for p in clips if key in (p.stem.lower(), p.name.lower())]
+        if exact:
+            return exact
+        # 同时匹配 stem 和完整文件名，避免「1」误命中「脚本 (1).mp4」
+        hits = [p for p in clips if key in p.stem.lower() or key in p.name.lower()]
         return hits
     return clips
 
@@ -584,7 +589,8 @@ def detect_legacy_bars(cfg, video, workdir, dur):
 
 # ---------------------------------------------------------------- render
 
-def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx_path=None):
+def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx_path=None,
+           cover_bars=None):
     v = cfg["video"]
     a = cfg["audio"]
     W, H, fps = v["width"], v["height"], v["fps"]
@@ -595,23 +601,34 @@ def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx
     inputs = ["-i", str(video), "-stream_loop", "-1", "-i", str(bgm)]
     fc = []
 
-    vchain = [f"scale={W}:{H}:flags=lanczos", f"fps={fps}", "setsar=1"]
+    fc.append(f"[0:v]scale={W}:{H}:flags=lanczos,fps={fps},setsar=1[base]")
+    cur = "[base]"
     if fx_frames:
         fx_dur = float(cfg["opening_fx"]["duration"])
         inputs += ["-framerate", str(fps), "-i", str(Path(fx_frames) / "%03d.png")]
-        fc.append(f"[0:v]{','.join(vchain)}[base]")
         fc.append("[2:v]format=rgba[fx]")
         fc.append(
-            f"[base][fx]overlay=0:0:shortest=0:enable='between(t,0,{fx_dur:.3f})'[ov]"
+            f"{cur}[fx]overlay=0:0:shortest=0:enable='between(t,0,{fx_dur:.3f})'[ov]"
         )
-        head, vchain = "[ov]", []
-    else:
-        head = "[0:v]"
+        cur = "[ov]"
+    # 自带烧录字幕有错字时：只在该字幕出现的时段把字幕带模糊掉，再由我们重打正确字幕
+    pad = int(cfg["legacy_sub"].get("cover_pad", 18))
+    blur = int(cfg["legacy_sub"].get("cover_blur", 18))
+    for i, b in enumerate(cover_bars or []):
+        y0 = max(0, int(b["y0"]) - pad)
+        y1 = min(H, int(b["y1"]) + pad)
+        if y1 - y0 < 8:
+            continue
+        en = f"between(t,{b['t0']:.2f},{b['t1']:.2f})"
+        fc.append(f"{cur}split=2[cv{i}a][cv{i}b]")
+        fc.append(f"[cv{i}b]crop={W}:{y1 - y0}:0:{y0},boxblur={blur}:3[cv{i}blur]")
+        fc.append(f"[cv{i}a][cv{i}blur]overlay=0:{y0}:enable='{en}'[cv{i}o]")
+        cur = f"[cv{i}o]"
     tail = []
     if ass_rel:
         tail.append(f"ass={ass_rel}:fontsdir=runtime/asr-models")
     tail.append("format=yuv420p")
-    fc.append(f"{head}{','.join(vchain + tail)}[v]")
+    fc.append(f"{cur}{','.join(tail)}[v]")
 
     fc.append(f"[0:a:0]volume={a['voice_volume']}[voice]")
     fc.append(
@@ -699,13 +716,20 @@ def process_clip(cfg, clip, args):
             log("检测到素材自带字幕：" + "；".join(
                 f"{b['y0']}-{b['y1']} @ {b['t0']:.1f}-{b['t1']:.1f}s" for b in legacy
             ))
-    skip_subs = bool(legacy) and cfg["subtitle"].get("skip_if_legacy", True)
+    sub_mode = cfg["legacy_sub"].get("mode", "skip")
+    skip_subs = bool(legacy) and sub_mode != "cover" and cfg["subtitle"].get("skip_if_legacy", True)
+    cover_bars = legacy if (legacy and sub_mode == "cover") else []
+    if cover_bars:
+        log(f"按 cover 模式遮盖自带字幕并重打（{len(cover_bars)} 段）")
 
     lines = []
     asr = []
     hint_text = ""
     ass_rel = None
-    if corrections and corrections.get("lines"):
+    skip_by_correction = bool(corrections and corrections.get("skip"))
+    if skip_by_correction:
+        log("校对稿标记跳过字幕：只出画面")
+    elif corrections and corrections.get("lines"):
         lines = [
             {"text": clean_text(x["text"]), "start": float(x["start"]), "end": float(x["end"])}
             for x in corrections["lines"]
@@ -724,8 +748,9 @@ def process_clip(cfg, clip, args):
             to_simplified(asr)
             asr_path.write_text(json.dumps(asr, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if skip_subs:
-        log("按规则跳过字幕环节：不加黑条、不叠加字幕")
+    if skip_subs or skip_by_correction:
+        if not skip_by_correction:
+            log("按规则跳过字幕环节：不加黑条、不叠加字幕")
         lines = []
         for stale in ("subs.ass", "lines.json"):
             p = workdir / stale
@@ -763,7 +788,7 @@ def process_clip(cfg, clip, args):
     name = args.name or f"{datetime.now().month}月{datetime.now().day}日_{stem[:8]}.mp4"
     out_dir = Path(cfg["paths"]["output_dir"])
     out_path = out_dir / name
-    render(cfg, clip, workdir, ass_rel, bgm, dur, out_path, fx_frames, sfx_path)
+    render(cfg, clip, workdir, ass_rel, bgm, dur, out_path, fx_frames, sfx_path, cover_bars)
 
     check = verify_output(cfg, out_path, workdir, dur)
     brand_ocr.write_index(cfg, stem, clip, brand, out_path)
@@ -813,8 +838,12 @@ def main():
     ap.add_argument("--brand-scan", action="store_true",
                     help="只识别品牌不剪片（含已剪素材），写入 brand_index.json")
     ap.add_argument("--force-brand", action="store_true", help="忽略品牌识别缓存重新扫描")
+    ap.add_argument("--config", help="改用指定配置文件（不同素材目录/输出目录时使用）")
+    ap.add_argument("--out-dir", help="覆盖输出目录（同步盘先渲到本地再拷入时用）")
     args = ap.parse_args()
-    cfg = load_config()
+    cfg = load_config(args.config)
+    if args.out_dir:
+        cfg["paths"]["output_dir"] = args.out_dir
 
     if args.brand_scan:
         clips = find_brand_clips(cfg, pattern=args.clip)
@@ -837,6 +866,17 @@ def main():
                 review.append((clip.stem, "识别失败"))
                 continue
             brand_ocr.write_index(cfg, clip.stem, clip, rec)
+            # 已剪素材补录品牌时同步 meta.json：发布端先读 meta.brand，不同步就看不到人工覆盖
+            meta_path = workdir / "meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    meta["brand"] = rec
+                    meta_path.write_text(
+                        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                except Exception as exc:
+                    log(f"更新 meta 失败 {clip.name}：{exc}")
             label = rec.get("brand") or "未识别"
             conf = rec.get("confidence") or 0
             print(

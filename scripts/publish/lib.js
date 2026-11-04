@@ -300,10 +300,58 @@ const COPY_FIXES = [
   [/种一口/g, '这一口'],
   [/那杯终于，回来了/g, '那杯终于回来了'],
   [/清爽冰，咖啡/g, '清爽冰咖啡'],
+  // 2026-11-03 手动成片实测的品牌名/常见同音错字
+  [/CocoDuka/g, 'CoCo都可'],
+  [/Cocoduc/g, 'CoCo都可'],
+  [/CocoD/g, 'CoCo都可'],
+  [/护上阿姨/g, '沪上阿姨'],
+  [/(?<!沪)上阿姨/g, '沪上阿姨'],
+  [/茶百度/g, '茶百道'],
+  [/鱼炸鸡腿/g, '临榆炸鸡腿'],
+  [/玉泥/g, '芋泥'],
+  [/玉口感/g, '芋口感'],
+  [/桃椒/g, '桃胶'],
+  [/早鸟玉兽/g, '早鸟预售'],
+  [/珍珠奶清/g, '珍珠奶茶'],
+  [/买一送团购十佳蒜/g, '买一送一团购优惠'],
+  // 2026-11-04 新一批口播实测：螺蛳粉、鲜芋奶绿、品牌名同音错字
+  [/原味味螺丝甜品套餐/g, '原味螺蛳粉甜品套餐'],
+  [/螺丝粉/g, '螺蛳粉'],
+  [/螺丝/g, '螺蛳'],
+  [/缩完粉粉来寄来一口/g, '嗦完粉再来一口'],
+  [/缩完粉/g, '嗦完粉'],
+  [/索完/g, '嗦完'],
+  [/鲜鱼奶绿/g, '鲜芋奶绿'],
+  [/鲜玉奶绿/g, '鲜芋奶绿'],
+  [/奶绿玉香/g, '奶绿芋香'],
+  [/肥伊麻/g, '肥姨妈'],
+  [/肥呵妈/g, '肥姨妈'],
+  [/肥阿妈/g, '肥姨妈'],
+  [/可可豆可/g, 'CoCo都可'],
+  // 2026-11-04 第二批实测：鸡柳大人、临榆炸鸡腿、三合一的同音错字
+  [/姬鲁大人/g, '鸡柳大人'],
+  [/三哈盒/g, '三合一'],
+  [/三合鹅/g, '三合一'],
+  [/淋临榆/g, '临榆'],
+  [/01炸鸡腿/g, '临榆炸鸡腿'],
+  [/铃银炸腿/g, '临榆炸鸡腿'],
+  [/车链，接安排/g, '戳链接安排'],
+  [/车链接/g, '戳链接'],
+  [/戳链接，接安排/g, '戳链接安排'],
+  [/戳链，接安排/g, '戳链接安排'],
+  [/手香腿/g, '手枪腿'],
+  [/手腔腿/g, '手枪腿'],
+  [/外酥里诺/g, '外酥里嫩'],
+  [/年糕诺/g, '年糕糯'],
+  [/缩干净/g, '嗦干净'],
+  [/小时组合/g, '小食组合'],
+  [/安立/g, '安利'],
+  [/赶，紧贴链接/g, '赶紧戳链接'],
+  [/腊味够近/g, '辣味够劲'],
 ];
 
 // 源视频自带的片尾口播 / ASR 幻觉，不能带进标题和描述
-const JUNK_LINE = /(点赞|订阅|转发|打赏|明镜|栏目|双击|关注我|加我微信|小黄车|购物车|淘宝|拼多多|感谢观看|感谢收看|好久不见|请不吝)/;
+const JUNK_LINE = /(点赞|订阅|转发|打赏|明镜|栏目|双击|关注我|加我微信|小黄车|购物车|淘宝|拼多多|感谢观看|感谢收看|好久不见|请不吝|谢谢大家)/;
 const PURE_LATIN = /^[A-Za-z0-9\s.。，,！!？?]+$/;
 const STUTTER = /(.)(.)\1\2/;
 const STANDALONE = /^(好|好喝|好看|好吃|好吃极了|不错)$/;
@@ -314,7 +362,7 @@ const GARBLE = /(豚|食胖|武天|兜皮|兜配|鸡翅肩|离似|娃娃宝|海�
 // 已确认的 ASR 乱码/低俗词：整条成片不自动发，换下一条
 const BAD_COPY = /(粪|赤道称|饭滚|吊渣|傻逼|妈的|卧槽|便便|我操|尼玛|拉屎|操你|日你|去死|贱人)/;
 // 断句明显坏掉的痕迹：宁可换下一条，也不发半截话
-const SUSPECT = /(，了|，见|合合适|真的无。|把我，|戳链$|谁拒绝这$|不，香)/;
+const SUSPECT = /(，了|，见|合合适|把我，|戳链$|谁拒绝这$|不，香)/;
 // 标题只允许中文、字母、数字与常见标点；控制字符 / 换行直接拒绝
 const TITLE_CHARS = /^[\u4e00-\u9fa5A-Za-z0-9 ，。！？、：；,.!?:;（）()《》""''“”‘’·\-—~～%$¥#@+]+$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -381,15 +429,23 @@ function dedupeLineText(text) {
   return out.join('，');
 }
 
+function applyCopyFixes(text) {
+  return COPY_FIXES.reduce((s, [re, to]) => s.replace(re, to), text);
+}
+
+// ASR 尾部的循环复读：同一 3 字以上片段在一句里出现 3 次以上，正常口播不会有
+const ASR_LOOP = /(.{3,12})(?:.*?\1){2,}/;
+
 function cleanLines(lines) {
   return dedupeLines(lines
-    .map(t => COPY_FIXES.reduce((s, [re, to]) => s.replace(re, to), t))
+    .map(applyCopyFixes)
     .map(t => t.replace(FILLER, '').replace(/[，,。！!？?]+$/g, '').trim())
     .map(dedupeLineText)
     // 「的快乐谁能拒绝」这类从半句开始的碎片，没有主语，直接丢弃
     .filter(t => !/^[的地得]/.test(t))
     .filter(t => t.length >= 2 && !STANDALONE.test(t) && !JUNK_LINE.test(t)
-      && !PURE_LATIN.test(t) && !STUTTER.test(t) && !GARBLE.test(t)));
+      && !PURE_LATIN.test(t) && !STUTTER.test(t) && !GARBLE.test(t))
+    .filter(t => !ASR_LOOP.test(t)));
 }
 
 // 话题不能带括号和空格，否则抖音不会渲染成胶囊
@@ -519,7 +575,8 @@ function buildCopy(videoInfo, state) {
     const subject = brand || product;
     bodyLines = subject ? [`今天来聊聊${subject}`] : [];
   }
-  const descCore = joinSmart(bodyLines);
+  // 跨行错字只有在拼接、补标点之后才会露出逗号连接，需要再过一遍纠错表
+  const descCore = applyCopyFixes(joinSmart(bodyLines));
   const ask = ['你们平时最常点哪一款？', '这一口你最想先尝哪样？', '评论区聊聊你的必点款？'][Math.floor(rnd() * 3)];
   let desc = `${descCore ? descCore.replace(/[。！？!?]+$/, '') + '。' : ''}${ask}`;
   if (desc.length > CONFIG.copy.max_desc) desc = desc.slice(0, CONFIG.copy.max_desc);

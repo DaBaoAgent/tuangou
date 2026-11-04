@@ -31,6 +31,7 @@
     "add_location": true,
     "location_fallback": "skip",
     "brand_min_confidence": 0.9,
+    "priority_brands": ["CoCo都可", "茶百道", "沪上阿姨"],
     "verify_after_publish": true,
     "max_retries": 2
   },

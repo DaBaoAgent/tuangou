@@ -8,3 +8,6 @@ runtime/
 output/
 __pycache__/
 *.pyc
+
+# 本机一次性运行配置（含绝对路径）
+scripts/auto-edit/config.*.json

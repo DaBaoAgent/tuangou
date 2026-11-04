@@ -138,10 +138,15 @@ async function main() {
     // 宝哥 2026-11-02：品牌不确定要联网核验，仍不确定就停下来跳过。
     // 文案明显是 ASR 乱码的成片跳过，避免把「特大粪」之类发出去。
     const minConf = L.CONFIG.publish.brand_min_confidence ?? 0.9;
+    const priorityBrands = L.CONFIG.publish.priority_brands || [];
+    const priority = v => {
+      const i = priorityBrands.indexOf(v.brand);
+      return i < 0 ? priorityBrands.length : i;
+    };
     const rank = v => (v.brand && v.brand_verified && !v.brand_needs_review) ? 0
       : v.brand_needs_review ? 3 : 1;
-    // 先按品牌可信度分拣：不确定的全部跳过并记录，再从上一条开始找能发的
-    const sorted = [...videos].sort((a, b) => rank(a) - rank(b));
+    // 宝哥指定的优先品牌先发（2026-11-03 奶茶），再按品牌可信度分拣
+    const sorted = [...videos].sort((a, b) => priority(a) - priority(b) || rank(a) - rank(b));
     const brandConfident = v => !!v.brand && !v.brand_needs_review &&
       (v.brand_verified || v.brand_confidence >= minConf);
     const skippedBrandFiles = sorted.filter(v => !brandConfident(v)).map(v => v.file);

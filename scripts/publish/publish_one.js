@@ -135,55 +135,119 @@ async function setLocation(page, brand) {
   return { ok: body.includes(selectedText), selected: selectedText, candidates: options.length };
 }
 
-// 确认「不同时发布」被选中：只认文字上下文匹配的 radio；读不到状态就点一下并按未知放行
+// 控件的文字标签：优先 label，其次 aria/title，再退回相邻兄弟；
+// 父容器仅在只含一个控件时启用，避免把整组选项的文字误当成某一个控件
+const CONTROL_TEXT_SRC = `
+  const boxText = el => (el && (el.innerText || el.textContent || '').trim()) || '';
+  const controlText = inp => {
+    const lab = inp.closest && inp.closest('label');
+    if (lab) return boxText(lab);
+    const aria = [inp.getAttribute('aria-label'), inp.getAttribute('aria-valuetext'), inp.getAttribute('title')]
+      .filter(Boolean).join(' ');
+    if (aria) return aria;
+    const next = boxText(inp.nextElementSibling);
+    if (next) return next;
+    const prev = boxText(inp.previousElementSibling);
+    if (prev) return prev;
+    const p = inp.parentElement;
+    if (p && p.querySelectorAll('input[type=radio],input[type=checkbox]').length === 1) return boxText(p);
+    return '';
+  };
+`;
+
+// 确认「不同时发布」被选中，并主动取消「同步到今日头条 / 红果短剧」：
+// 只认文字关联匹配的 radio，避免误读同组第一个选项；同步项若被默认勾选，先取消再复核
 async function ensureNotSimultaneous(page) {
-  return page.evaluate(() => {
+  return page.evaluate(`(() => {
     const text = '不同时发布';
-    const exact = [...document.querySelectorAll('label,div,span')]
-      .filter(e => (e.innerText || '').trim() === text);
+    const OTHER = '同时发布到';
+    const SYNC = /(今日头条|红果)/;
+    ${CONTROL_TEXT_SRC}
+
+    // 先收集并取消同步平台的 checkbox；点击「不同时发布」后这些选项可能被页面卸载
+    const syncChecked = [];
+    for (const inp of [...document.querySelectorAll('input[type=checkbox]')]) {
+      const ctx = controlText(inp);
+      if (!SYNC.test(ctx) || !inp.checked) continue;
+      syncChecked.push(ctx.slice(0, 20));
+      (inp.closest && inp.closest('label') || inp).click();
+    }
+    for (const el of [...document.querySelectorAll('[role=checkbox][aria-checked=true]')]) {
+      const ctx = boxText(el.closest('label')) || el.getAttribute('aria-label') || boxText(el);
+      if (!SYNC.test(ctx)) continue;
+      syncChecked.push(ctx.slice(0, 20));
+      el.click();
+    }
+
+    const nodes = [...document.querySelectorAll('label,div,span')];
+    const exact = nodes.filter(e => boxText(e) === text);
     let el = exact[exact.length - 1];
     if (!el) {
-      el = [...document.querySelectorAll('label,div,span')]
-        .filter(e => (e.innerText || '').includes(text))
-        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0];
+      el = nodes.filter(e => boxText(e).includes(text))
+        .sort((a, b) => boxText(a).length - boxText(b).length)[0];
     }
-    if (!el) return { found: false, selected: null, clicked: false, via: 'missing' };
+    if (!el) return { found: false, selected: null, clicked: false, via: 'missing', syncChecked };
 
-    // 先看祖先 className 是否已标记选中，避免对已选中的自定义单选框再点一次
-    let node = el;
-    for (let i = 0; i < 4 && node; i++, node = node.parentElement) {
-      if (/checked|selected|active/i.test(String(node.className || ''))) {
-        return { found: true, selected: true, clicked: false, via: 'class' };
-      }
-    }
-
-    // 只接受文字上下文里也包含「不同时发布」的 input，避免误读同组第一个 radio
+    // 候选控件的文字上下文必须包含「不同时发布」且不能同时包含「同时发布到」；
+    // 抖音该组其实是 input[type=checkbox].radio-native，radio 与 checkbox 都要认
     let input = null;
-    node = el;
+    let node = el;
     for (let i = 0; i < 4 && node && !input; i++, node = node.parentElement) {
       const inputs = [...(node.querySelectorAll ? node.querySelectorAll('input[type=radio],input[type=checkbox]') : [])];
       input = inputs.find(inp => {
-        const lab = inp.closest && inp.closest('label');
-        const ctx = (lab && lab.innerText) || (inp.parentElement && inp.parentElement.innerText) || '';
-        return ctx.includes(text);
+        const ctx = controlText(inp);
+        return ctx.includes(text) && !ctx.includes(OTHER);
       }) || null;
     }
     if (input) {
       const was = !!input.checked;
-      if (!was) el.click();
-      return { found: true, selected: !!input.checked, clicked: !was, via: 'input' };
+      if (!was) (input.closest('label') || input).click();
+      return { found: true, selected: !!input.checked, clicked: !was, via: 'input', syncChecked };
+    }
+
+    // 自定义单选框：只认文字元素自身/直接父级的选中类名；容器同时含两种选项时按未知处理
+    node = el;
+    for (let i = 0; i < 2 && node; i++, node = node.parentElement) {
+      const t = boxText(node);
+      if (t.includes(OTHER) && t.includes(text)) continue;
+      if (/checked|selected|active/i.test(String(node.className || ''))) {
+        return { found: true, selected: true, clicked: false, via: 'class', syncChecked };
+      }
     }
     el.click();
-    return { found: true, selected: null, clicked: true, via: 'text' };
-  });
+    return { found: true, selected: null, clicked: true, via: 'text', syncChecked };
+  })()`);
+}
+
+// 预检时独立读实时 DOM：任何仍被勾选的今日头条/红果同步项都算未通过
+async function liveSyncChecked(page) {
+  return page.evaluate(`(() => {
+    const SYNC = /(今日头条|红果)/;
+    ${CONTROL_TEXT_SRC}
+    const out = [];
+    for (const inp of [...document.querySelectorAll('input[type=checkbox]')]) {
+      const ctx = controlText(inp);
+      if (SYNC.test(ctx) && inp.checked) out.push(ctx.slice(0, 20));
+    }
+    for (const el of [...document.querySelectorAll('[role=checkbox][aria-checked=true]')]) {
+      const ctx = boxText(el.closest('label')) || el.getAttribute('aria-label') || boxText(el);
+      if (SYNC.test(ctx)) out.push(ctx.slice(0, 20));
+    }
+    return out;
+  })()`);
 }
 
 async function verifyBeforePublish(page, settings = {}) {
-  const body = await page.locator('body').innerText();
+  const [body, syncCheckedLive] = await Promise.all([
+    page.locator('body').innerText(),
+    liveSyncChecked(page),
+  ]);
   return {
     aiDeclaration: body.includes('内容由AI生成'),
-    // 必须读到明确选中状态才放行；读不到（selected=null）一律按未确认处理
-    notSimultaneous: body.includes('不同时发布') && settings.selected === true,
+    // 必须读到明确选中状态，且操作结果与预检时实时 DOM 都没有同步项残留才放行
+    notSimultaneous: body.includes('不同时发布') && settings.selected === true
+      && (settings.syncChecked || []).length === 0 && syncCheckedLive.length === 0,
+    syncCheckedLive,
     publishNow: body.includes('立即发布'),
     coverMissing: body.includes('横/竖双封面缺失'),
     hasLocation: !body.includes('输入地理位置'),
@@ -240,8 +304,8 @@ async function publishOne(videoInfo, copy, opts = {}) {
     log('declaration ' + decl);
 
     let settings = await ensureNotSimultaneous(page);
-    // 读不到选中状态时再确认一次；仍然读不到就按未选中处理，不发布
-    if (settings.selected == null) {
+    // 读不到选中状态或有同步项刚被取消时再确认一次；仍不满足就按未选中处理，不发布
+    if (settings.selected == null || (settings.syncChecked || []).length > 0) {
       await page.waitForTimeout(900);
       settings = await ensureNotSimultaneous(page);
     }
@@ -310,7 +374,7 @@ async function publishOne(videoInfo, copy, opts = {}) {
   }
 }
 
-module.exports = { publishOne };
+module.exports = { publishOne, ensureNotSimultaneous, verifyBeforePublish };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
