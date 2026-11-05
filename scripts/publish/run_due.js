@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const L = require('./lib');
+const SG = require('./subtitle_gate');
 
 const LOCK = path.join(L.CONFIG.paths.work_dir, 'run.lock');
 
@@ -25,6 +26,19 @@ function notify(title, msg) {
 function wechat(text) {
   const r = L.pushWeChat(text);
   if (!r.ok) log(`wechat push failed: ${r.error}`);
+}
+
+// 字幕待人工确认 / OCR 不可用每小时最多提醒一次，避免每轮计划刷屏
+function noticeOnce(key, title, msg, hours = 1) {
+  const p = path.join(L.CONFIG.paths.work_dir, 'subtitle_notice.json');
+  const d = L.readJson(p, {});
+  const last = d[key] ? Date.parse(d[key]) : 0;
+  if (Date.now() - last < hours * 60 * 60 * 1000) return false;
+  d[key] = new Date().toISOString();
+  L.writeJson(p, d);
+  notify(title, msg);
+  wechat(msg);
+  return true;
 }
 
 function acquireLock() {
@@ -82,9 +96,46 @@ function spawnPrepare() {
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const state = L.loadState();
-  if (state.paused) { log(`PAUSED: ${state.paused_reason}`); return; }
   if (!acquireLock()) { log('lock busy, skip'); return; }
   try {
+    // 品牌不能确认的成片直接移到「品牌待确认」，不留在自动发布队列（宝哥 2026-11-04 固化）
+    // 暂停状态下也先执行，避免品牌未确认的成片一直堆在待发目录
+    const q = L.quarantineUnconfirmed({ dryRun });
+    if (q.moved.length) {
+      for (const m of q.moved) log(`quarantine ${m.file}: ${m.reason}${m.to ? ` -> ${m.to}` : ' (dry-run)'}`);
+      if (!dryRun) {
+        const names = q.moved.slice(0, 5).map(m => m.file).join('、') + (q.moved.length > 5 ? ' 等' : '');
+        notify('团购成片移入品牌待确认', `${q.moved.length} 条品牌未确认：${names}`);
+        wechat(`⚠️ 团购成片移入品牌待确认\n${q.moved.length} 条品牌未确认：${names}\n请确认品牌后再归位`);
+      }
+    }
+
+    // 字幕闸门（宝哥 2026-11-04 固化）：新成片先 OCR 复核，失败移入「字幕待修复」，
+    // 没有校对依据的手工新片暂缓发布。暂停状态下也继续扫描，避免坏字幕堆积。
+    const sub = SG.auditInventory({ dryRun });
+    if (sub.audited || sub.moved.length || sub.manual.length || sub.unavailable.length) {
+      log(`subtitle audit: checked=${sub.audited} cached=${sub.cached} moved=${sub.moved.length}`
+        + ` manual=${sub.manual.length} unavailable=${sub.unavailable.length}`);
+    }
+    if (!dryRun) {
+      if (sub.moved.length) {
+        const names = sub.moved.slice(0, 5).map(m => m.file).join('、') + (sub.moved.length > 5 ? ' 等' : '');
+        notify('团购成片字幕待修复', `${sub.moved.length} 条字幕复核失败：${names}`);
+        wechat(`⚠️ 团购成片字幕待修复\n${sub.moved.length} 条字幕复核失败，已移入「字幕待修复」：${names}`);
+      }
+      if (sub.manual.length) {
+        const names = sub.manual.slice(0, 5).map(m => m.file).join('、') + (sub.manual.length > 5 ? ' 等' : '');
+        noticeOnce('manual', '团购新成片待字幕确认',
+          `⚠️ 团购新成片待字幕确认\n${sub.manual.length} 条缺少字幕校对稿，已暂缓自动发布：${names}`);
+      }
+      if (sub.unavailable.length) {
+        noticeOnce('unavailable', '字幕审计服务不可用',
+          `⚠️ 字幕审计服务不可用\n${sub.unavailable.length} 条新成片暂时无法复核字幕，已暂缓自动发布`);
+      }
+    }
+
+    if (state.paused) { log(`PAUSED: ${state.paused_reason}`); return; }
+
     const date = L.todayStr();
     // dry-run 不落盘计划，避免只做检查也产生副作用
     const plan = L.ensurePlan(date, { save: !dryRun });
@@ -116,7 +167,21 @@ async function main() {
     }
 
     const item = due[0];
-    const videos = L.pickVideo();
+    const allVideos = L.pickVideo();
+    // 字幕未确认的新片不进发布队列；库存里还有别的可发片时继续发别的
+    const videos = allVideos.filter(v => SG.confirmed(v));
+    const subtitleBlocked = allVideos.filter(v => !SG.confirmed(v));
+    if (!videos.length && subtitleBlocked.length) {
+      if (dryRun) { log(`DRY_RUN no subtitle-confirmed video (${subtitleBlocked.length} blocked)`); return; }
+      item.status = 'pending';
+      item.reason = 'subtitle unverified';
+      L.savePlan(date, plan);
+      const names = subtitleBlocked.slice(0, 3).map(v => v.file).join('、') + (subtitleBlocked.length > 3 ? ' 等' : '');
+      log(`subtitle unverified, publish skipped (${subtitleBlocked.length})`);
+      noticeOnce('blocked', '团购发布等待字幕确认',
+        `⚠️ 团购发布等待字幕确认\n${subtitleBlocked.length} 条成片字幕未确认，已跳过：${names}`);
+      return;
+    }
     if (!videos.length) {
       if (dryRun) { log('DRY_RUN no video in inventory'); return; }
       item.status = 'pending';
@@ -137,7 +202,6 @@ async function main() {
     // 品牌必须确认：无品牌、needs_review、或置信度低于阈值一律跳过，绝不猜品牌发布。
     // 宝哥 2026-11-02：品牌不确定要联网核验，仍不确定就停下来跳过。
     // 文案明显是 ASR 乱码的成片跳过，避免把「特大粪」之类发出去。
-    const minConf = L.CONFIG.publish.brand_min_confidence ?? 0.9;
     const priorityBrands = L.CONFIG.publish.priority_brands || [];
     const priority = v => {
       const i = priorityBrands.indexOf(v.brand);
@@ -147,8 +211,7 @@ async function main() {
       : v.brand_needs_review ? 3 : 1;
     // 宝哥指定的优先品牌先发（2026-11-03 奶茶），再按品牌可信度分拣
     const sorted = [...videos].sort((a, b) => priority(a) - priority(b) || rank(a) - rank(b));
-    const brandConfident = v => !!v.brand && !v.brand_needs_review &&
-      (v.brand_verified || v.brand_confidence >= minConf);
+    const brandConfident = L.brandConfirmed;
     const skippedBrandFiles = sorted.filter(v => !brandConfident(v)).map(v => v.file);
     const skippedBrand = skippedBrandFiles.length;
     for (const v of sorted) if (!brandConfident(v)) {

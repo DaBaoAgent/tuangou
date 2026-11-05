@@ -19,7 +19,7 @@ function todayStr() {
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tuangou-run-'));
   sandboxes.push(dir);
-  for (const f of ['lib.js', 'run_due.js']) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
+  for (const f of ['lib.js', 'run_due.js', 'subtitle_gate.js']) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   // 通知桩：真的被调用时留下 notified.txt，用来断言 dry-run 没发通知
   fs.writeFileSync(path.join(dir, 'notify.ps1'), [
     'param([string]$Title,[string]$Message)',
@@ -35,6 +35,8 @@ function sandbox() {
     profile_dir: slash(path.join(dir, 'profile')),
   };
   cfg.schedule.window = { start: '00:00', end: '23:59' };
+  // 这些用例专注品牌/发布状态，字幕闸门用「全部视为存量片」避免依赖 OCR
+  cfg.publish.subtitle_enforce_since = '2099-01-01T00:00:00+08:00';
   cfg.notify = { wechat: false };
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg, null, 2));
   fs.mkdirSync(path.join(dir, '成片'), { recursive: true });
@@ -230,7 +232,7 @@ test('还没点发布就遇到验证码：保留队列，只暂停', () => {
   assert.equal(fs.existsSync(path.join(sb.dir, '成片/_unverified_成片A.mp4')), false);
 });
 
-test('品牌置信度不足：跳过不发布，发通知等人工确认', () => {
+test('品牌置信度不足：自动移入品牌待确认并通知，绝不发布', () => {
   const sb = sandbox();
   writeStub(sb);
   addUnconfirmedVideo(sb);
@@ -239,15 +241,18 @@ test('品牌置信度不足：跳过不发布，发通知等人工确认', () =>
 
   // 发布器绝不能被调用
   assert.equal(fs.existsSync(path.join(sb.dir, 'stub_calls.txt')), false);
-  const item = readPlan(sb).items[0];
-  assert.equal(item.status, 'pending');
-  assert.equal(item.reason, 'brand unconfirmed');
-  assert.match(fs.readFileSync(notifiedFile(sb), 'utf8'), /品牌/);
-  // 成片保留在队列，等人工核验品牌后再发
-  assert.equal(fs.existsSync(path.join(sb.dir, '成片/成片B.mp4')), true);
+  assert.equal(readPlan(sb).items[0].status, 'pending');
+  const notified = fs.readFileSync(notifiedFile(sb), 'utf8');
+  assert.match(notified, /品牌待确认/);
+  assert.match(notified, /1 条品牌未确认/);
+  // 成片已移出自动队列，meta.output 同步到新目录
+  assert.equal(fs.existsSync(path.join(sb.dir, '成片/成片B.mp4')), false);
+  assert.equal(fs.existsSync(path.join(sb.dir, '成片/品牌待确认/成片B.mp4')), true);
+  const meta = JSON.parse(fs.readFileSync(path.join(sb.dir, 'work/clip2/meta.json'), 'utf8'));
+  assert.ok(meta.output.includes('品牌待确认'));
 });
 
-test('跳过品牌不确定的成片，继续发下一条品牌确定的，并通知跳过名单', () => {
+test('品牌不确定的成片移入品牌待确认，继续发下一条品牌确定的', () => {
   const sb = sandbox();
   writeStub(sb);
   addUnconfirmedVideo(sb);
@@ -263,10 +268,11 @@ test('跳过品牌不确定的成片，继续发下一条品牌确定的，并�
 
   const notified = fs.readFileSync(notifiedFile(sb), 'utf8');
   assert.match(notified, /已发布/);
-  assert.match(notified, /跳过 1 条/);
+  assert.match(notified, /品牌待确认/);
 
-  // 不确定品牌的那条仍留在库存，等人工审核
-  assert.equal(fs.existsSync(path.join(sb.dir, '成片/成片B.mp4')), true);
+  // 不确定品牌的那条已移出库存，等人工确认
+  assert.equal(fs.existsSync(path.join(sb.dir, '成片/成片B.mp4')), false);
+  assert.equal(fs.existsSync(path.join(sb.dir, '成片/品牌待确认/成片B.mp4')), true);
 });
 
 test('pickVideo 排除 state.excluded_videos 与计划里待核实/审核不通过的成片', () => {

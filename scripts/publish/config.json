@@ -2,6 +2,9 @@
   "paths": {
     "video_dir": "D:/@kaifa/tuangou/素材库/已剪成片",
     "published_dir": "D:/@kaifa/tuangou/素材库/已剪成片/已发",
+    "brand_review_dir": "D:/@kaifa/tuangou/素材库/已剪成片/品牌待确认",
+    "subtitle_review_dir": "D:/@kaifa/tuangou/素材库/已剪成片/字幕待修复",
+    "subtitle_audit_cache": "D:/@kaifa/tuangou/runtime/publish/subtitle_audit.json",
     "work_dir": "D:/@kaifa/tuangou/runtime/publish",
     "auto_edit_work": "D:/@kaifa/tuangou/runtime/auto-edit/work",
     "brand_index": "D:/@kaifa/tuangou/runtime/auto-edit/brand_index.json",
@@ -15,8 +18,8 @@
       { "day": 3, "count": 6 },
       { "day": 4, "count": 8 }
     ],
-    "steady_min": 8,
-    "steady_max": 12,
+    "steady_min": 5,
+    "steady_max": 8,
     "min_gap_minutes": 25,
     "start_date": "2026-11-01"
   },
@@ -31,6 +34,7 @@
     "add_location": true,
     "location_fallback": "skip",
     "brand_min_confidence": 0.9,
+    "subtitle_enforce_since": "2026-11-04T19:00:00+08:00",
     "priority_brands": ["CoCo都可", "茶百道", "沪上阿姨"],
     "verify_after_publish": true,
     "max_retries": 2

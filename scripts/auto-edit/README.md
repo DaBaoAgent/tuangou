@@ -188,9 +188,14 @@ python scripts/auto-edit/audit_subs.py \
 本流程 2026-11-04 实测：项目库 39 条重制片经 `audit_subs.py` 前身脚本逐行复核通过，
 `已发/coco都可：42` 因已发布保持只读；Baidu 批次 8 条按同一流程交付。
 
+发布端已自动执行同一类复核：`scripts/publish/subtitle_gate.js` 调 `audit_clip.py`
+（单条成片、参数同上的精简版）按 `meta.lines` 或 `subtitle_repair.corrections` 逐行 OCR，
+不通过就移入 `素材库/已剪成片/字幕待修复`，没有校对稿的新片暂缓发布。日常修字只需
+按 `legacy_sub.mode=cover` 重渲并更新 `meta.lines` / `subtitle_repair`，发布闸门会自动复检。
+
 ## 已知限制与风险
 
-- 自带字幕的素材保留原 AI 字幕，原字幕里的错字无法修正，发布前需抽检。
+- 自带字幕的素材默认保留原 AI 字幕；需要修字时用 `legacy_sub.mode=cover` 遮盖原字幕带后按校对稿重打，改稿后必须重渲并复检。
 - 无字幕素材的 ASR 只做初稿：品牌名、口音、背景音会听错，发布前必须人工过一遍字幕。
 - BGM 来自本机曲库并按内容关键词自动匹配；如需替换，改 `config.json` 的 `bgm.rules`
   或在 `bgm.default` 指定。BGM 是否可商用取决于曲目授权，对外投放前确认版权。

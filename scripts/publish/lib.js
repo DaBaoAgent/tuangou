@@ -162,8 +162,7 @@ function ensurePlan(dateStr, opts = {}) {
   return plan;
 }
 
-function listVideos() {
-  const dir = CONFIG.paths.video_dir;
+function listVideos(dir = CONFIG.paths.video_dir) {
   if (!fs.existsSync(dir)) return [];
   const stableMs = 2 * 60 * 1000;
   return fs.readdirSync(dir)
@@ -221,6 +220,78 @@ function inspectVideos() {
     });
   }
   return out;
+}
+
+// 品牌闸门：无品牌、待复核、或置信度低于阈值都算「不能确认」
+function brandConfirmed(v) {
+  const min = CONFIG.publish.brand_min_confidence ?? 0.9;
+  return !!v.brand && !v.brand_needs_review && (v.brand_verified || v.brand_confidence >= min);
+}
+
+// 品牌不能确认的成片移入「品牌待确认」目录，杜绝猜品牌发布。
+// 宝哥 2026-11-04 固化：自动发布每轮先做一次兜底扫描，之后也按此规则执行。
+function quarantineUnconfirmed(opts = {}) {
+  const videoDir = opts.videoDir || CONFIG.paths.video_dir;
+  const reviewDir = opts.reviewDir || CONFIG.paths.brand_review_dir || path.join(videoDir, '品牌待确认');
+  const workRoot = opts.workRoot || CONFIG.paths.auto_edit_work;
+  const brandIndexPath = opts.brandIndexPath || CONFIG.paths.brand_index;
+  const dryRun = !!opts.dryRun;
+
+  const metas = [];
+  if (fs.existsSync(workRoot)) {
+    for (const d of fs.readdirSync(workRoot)) {
+      const m = readJson(path.join(workRoot, d, 'meta.json'), null);
+      if (m) metas.push({ dir: d, m });
+    }
+  }
+  const brandIndex = readJson(brandIndexPath, {});
+  const moved = [];
+  const kept = [];
+
+  for (const video of listVideos(videoDir)) {
+    const base = path.basename(video);
+    const hit = metas.find(x => x.m.output && path.basename(x.m.output) === base);
+    const clipKey = hit ? hit.dir : base.replace(/\.[^.]+$/, '');
+    const meta = hit ? hit.m : {};
+    const idx = brandIndex[clipKey] || {};
+    const brand = (meta.brand && meta.brand.brand)
+      || (typeof meta.brand === 'string' ? meta.brand : null) || idx.brand || null;
+    const needsReview = hit ? !!meta.brand?.needs_review : !!idx.needs_review;
+    const confidence = Number(meta.brand?.confidence ?? idx.confidence) || 0;
+    const verified = !!BRANDS.brands.find(b => b.name === brand && b.verified);
+    const confirmed = !!brand && !needsReview
+      && (verified || confidence >= (CONFIG.publish.brand_min_confidence ?? 0.9));
+
+    if (confirmed) { kept.push(base); continue; }
+
+    const reason = !brand ? 'no brand' : needsReview ? 'needs review'
+      : `confidence ${confidence} < ${CONFIG.publish.brand_min_confidence ?? 0.9}`;
+    const rec = { file: base, from: video, brand, confidence, needs_review: needsReview, reason };
+
+    if (dryRun) { moved.push({ ...rec, to: null }); continue; }
+
+    ensureDir(reviewDir);
+    let dest = path.join(reviewDir, base);
+    if (fs.existsSync(dest)) {
+      const ext = path.extname(base);
+      dest = path.join(reviewDir, `${path.basename(base, ext)}_${Date.now()}${ext}`);
+    }
+    fs.renameSync(video, dest);
+    rec.to = dest;
+
+    if (hit) {
+      meta.output = dest;
+      writeJson(path.join(workRoot, hit.dir, 'meta.json'), meta);
+    }
+    if (brandIndex[clipKey]) {
+      brandIndex[clipKey].output = dest;
+      brandIndex[clipKey].updated_at = new Date().toISOString();
+    }
+    moved.push(rec);
+  }
+
+  if (!dryRun && moved.length) writeJson(brandIndexPath, brandIndex);
+  return { moved, kept, dryRun };
 }
 
 function pickVideo() {
@@ -603,4 +674,5 @@ module.exports = {
   todayStr, minutesOf, hhmmOf, dayIndex,
   loadState, saveState, loadPlan, savePlan, ensurePlan, targetCount, buildTimes,
   inspectVideos, pickVideo, buildCopy, copyClean, seededRandom,
+  brandConfirmed, quarantineUnconfirmed,
 };
