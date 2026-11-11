@@ -127,6 +127,76 @@ python scripts/auto-edit/auto_edit.py --brand-scan --force-brand
 > 2～12 秒段 0.991），增益拟合后仍一致，残余仅为 AAC 编码误差；画面差异只在字幕带。
 > 该样片本身并没有白线冲刺效果和音效，当前特效是按需求新建的。
 
+## 开头 1.5 秒钩子（2026-11-11 宝哥拍板）
+
+账号「2 秒跳出 62%」，光堆量救不了，先改开头结构。每条成片在开头 1.5 秒做两件事：
+
+1. **推近运镜**：`hook.punch_in`（默认 1.08）从轻微推近缓慢回中，给首帧一点运动感。
+   滤镜放在所有 overlay 之后、ASS 之前，自带字幕的模糊条跟着一起缩放，坐标不会错位。
+2. **钩子卡**：画面顶部 24% 处压一行加粗大字（`hook.duration` 1.5 秒，淡入淡出）。
+   样式：**黄字 `hook.fill`（FFD400）+ 很窄的黑描边 `hook.outline`=2、无阴影、
+   字号 `hook.font_size`=142**，和底部白字字幕（112）区分开（2026-11-11 宝哥定）。
+   文案**只从已有口播/字幕里选，不编造卖点**。取词来源按可靠性排：
+   人工校对稿（`corrections/`）> 画面烧录字幕 OCR（跳过字幕的素材，`hook_from_legacy_ocr()`）>
+   ASR 断句。**ASR 直接按字硬截已停用**——2026-11-11 批量试跑把「链接」识别成「练街」顶上过卡片。
+   另外只认开头 `hook.max_start_seconds`（9 秒）内说到的词，尾段多是 CTA 或幻觉。规则细节：
+   - 优先用 `build_lines()` 切好的自然字幕短句（跳过字幕的素材也会现切一份），
+     字幕行里没有可用词时才退回按词边界拼的窗口；
+   - 必须含 `hook.keywords` 里的卖点词（买一送一/招牌/爆汁/酥/脆/糯/上头/划算…）
+     或带疑问语气（吗/吧/呢）；
+   - 4～7 字优先，9 字以上扣分（太长多是从半句里截出来的）；
+   - 必须发生在开头 `hook.duration + 1 秒` 之后，且不能和这期间的画面文字重复——
+     第一版样片就踩过「顶部钩子 + 底部原字幕」同字的坑（`审核样片_钩子_喜见茶山.mp4` 首版）；
+   - ASR 片尾 0.0x 秒的幻觉段（重复句）直接丢弃。
+   取不到合适文案就只保留运镜，**宁可不加卡，也不上错字或半句话**。
+   - `hook.enabled: false` 可整体关闭；`max_chars` / `font_size` / `margin_top_ratio` 可调。
+
+实测覆盖率：现有 107 条素材里 42 条能选出合格钩子（约 39%），运镜 100% 生效。
+样片：`素材库/已剪成片/审核样片_钩子_山中无老虎.mp4`（钩子「聚餐更划算」+ 底部原字幕
+「海鲜大咖 娃娃煲来啦」），`审核样片_钩子_喜见茶山.mp4`（该条无合格钩子，只加运镜）。
+`审核样片_*` 前缀会被发布队列忽略，不会自动发出去。
+
+### 库存重剪（2026-11-11）
+新开头结构上线前的成片还在库存里，用 `rerender_stock.js` 从归档源素材重渲：
+
+```bash
+node scripts/auto-edit/rerender_stock.js --dry-run   # 看成片→源素材对应关系
+node scripts/auto-edit/rerender_stock.js --limit 2   # 先渲 2 条验收
+node scripts/auto-edit/rerender_stock.js             # 全量到 素材库/已剪成片/重剪-YYYYMMDD/
+```
+
+- `auto_edit.py --source-dir 素材库/未剪素材/已剪` 直接从归档源取素材；`--no-move` 不搬源。
+- 重剪会覆盖 workdir 的 `meta.json`，脚本先把旧版备份成 `meta.json.bak-时间戳`。
+- 只有「成片 → workdir → 已剪源」能对上的才重剪；源是更早一版成片、原素材已不在的会列入
+  manifest 的 `skipped`（2026-11-11 实测 74 条库存里 45 条可重剪、29 条缺原始素材）。
+  缺源的这批不重剪，改用下面的「缺源成片只叠钩子卡」补开头。
+- 渲染记录写到 `runtime/auto-edit/rerender-YYYYMMDD.json`，先落计划再逐条更新进度。
+
+实现：`auto_edit.py#pick_hook()` 选词、`hook_from_legacy_ocr()` 读画面字幕、`build_ass()` 画卡、`render()` 运镜；
+配置在 `config.json` 的 `hook` 段。钩子文案会写进 `meta.json` 的 `hook` 字段，便于复核。
+
+### 缺源成片只叠钩子卡（2026-11-11）
+
+`skipped` 里那 29 条的源是更早一版成片，再剪是第三代、画质会掉，所以**不重剪**，
+只把开头钩子卡补上去（宝哥定：29 条只叠钩子卡）：
+
+```bash
+node scripts/auto-edit/hook_overlay_stock.js --dry-run   # 先看名单
+node scripts/auto-edit/hook_overlay_stock.js --limit 2   # 先渲 2 条验收
+node scripts/auto-edit/hook_overlay_stock.js             # 全量到 素材库/已剪成片/钩子-YYYYMMDD/
+```
+
+- 单条入口 `auto_edit.py --hook-only --clip <成片文件名> --out-dir <目录> [--name <输出名>]`。
+- 行为：按 `meta.output` 的 basename 反查工作目录（`find_workdir_for_film()`），钩子仍走
+  「校对稿 > 画面字幕 OCR」（`hook_for_existing()`，ASR 硬截照样不参与），**只叠 ASS 卡**：
+  不推近、不重烧字幕、音轨能直拷就 `-c:a copy`；输出后照样抽帧自检（`verify_output()`）。
+- 名单取最近一次 `runtime/auto-edit/rerender-*.json#skipped`，只处理**仍在库存顶层**的成片
+  （已被品牌/字幕闸门挪走的不碰）；`.mov/.mkv` 输出统一改成同名 `.mp4`。
+- 进度写 `runtime/auto-edit/hook-overlay-YYYYMMDD.json`；加卡的片换进库存顶层，旧版本按批次留档。
+- 2026-11-11 实跑：27 条里 **8 条配上钩子、19 条无合格钩子跳过、0 失败**
+  （华莱士厚霸堡、古茗、喜山奈 ×2、真茶屋、笨姐就是火辣 ×2、茉沏）。取不到就保持原样，
+  宁可不加卡也不上错字。
+
 ## 人工校对字幕（仅无字幕素材）
 
 只对「素材本身没有烧录字幕」的片段生效。ASR 对品牌名、口音、背景音容易有错字。

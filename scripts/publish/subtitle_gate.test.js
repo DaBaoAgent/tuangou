@@ -13,7 +13,7 @@ function slash(p) { return p.replace(/\\/g, '/'); }
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tuangou-sub-'));
   sandboxes.push(dir);
-  for (const f of ['lib.js', 'subtitle_gate.js']) {
+  for (const f of ['lib.js', 'subtitle_gate.js', 'analytics.js', 'queue_score.js', 'xlsx.js']) {
     fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   }
   const cfg = JSON.parse(fs.readFileSync(path.join(SRC, 'config.json'), 'utf8'));
@@ -25,7 +25,6 @@ function sandbox() {
     brand_index: slash(path.join(dir, 'work/brand_index.json')),
     profile_dir: slash(path.join(dir, 'profile')),
   };
-  cfg.notify = { wechat: false };
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg, null, 2));
   fs.mkdirSync(path.join(dir, '成片'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'work'), { recursive: true });

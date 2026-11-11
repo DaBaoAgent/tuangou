@@ -5,6 +5,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const L = require('./lib');
 const SG = require('./subtitle_gate');
+const A = require('./analytics');
+const QS = require('./queue_score');
 
 const LOCK = path.join(L.CONFIG.paths.work_dir, 'run.lock');
 
@@ -23,10 +25,6 @@ function notify(title, msg) {
   } catch (e) { log(`notify failed: ${e.message}`); }
 }
 
-function wechat(text) {
-  const r = L.pushWeChat(text);
-  if (!r.ok) log(`wechat push failed: ${r.error}`);
-}
 
 // 字幕待人工确认 / OCR 不可用每小时最多提醒一次，避免每轮计划刷屏
 function noticeOnce(key, title, msg, hours = 1) {
@@ -37,20 +35,36 @@ function noticeOnce(key, title, msg, hours = 1) {
   d[key] = new Date().toISOString();
   L.writeJson(p, d);
   notify(title, msg);
-  wechat(msg);
   return true;
 }
 
+// A2/A7（2026-11-08）：锁里写 pid，先看 pid 是否存活；持锁方每 60 秒刷 mtime 当心跳。
+// 只有「进程真没了」或「心跳真过期」才允许接管，避免上一轮还在跑就被判过期、同一成片发两次。
+const LOCK_TTL_MS = Math.max(60, Number(L.CONFIG.publish.lock_ttl_sec ?? 1800)) * 1000;
+let heartbeatTimer = null;
 function acquireLock() {
   if (fs.existsSync(LOCK)) {
-    const st = fs.statSync(LOCK);
-    if (Date.now() - st.mtimeMs < 30 * 60 * 1000) return false;
-    fs.unlinkSync(LOCK);
+    let owner = 0;
+    try { owner = Number(String(fs.readFileSync(LOCK, 'utf8')).trim()) || 0; } catch {}
+    const alive = owner > 0 && L.isPidAlive(owner);
+    let fresh = false;
+    try { fresh = Date.now() - fs.statSync(LOCK).mtimeMs < LOCK_TTL_MS; } catch {}
+    if (alive || fresh) {
+      log(`lock busy, skip (pid=${owner || '?'} alive=${alive} fresh=${fresh})`);
+      return false;
+    }
+    log(`stale run lock (pid=${owner || '?'} dead), taking over`);
+    try { fs.unlinkSync(LOCK); } catch {}
   }
   fs.writeFileSync(LOCK, String(process.pid));
+  heartbeatTimer = setInterval(() => { try { const now = new Date(); fs.utimesSync(LOCK, now, now); } catch {} }, 60000);
+  if (heartbeatTimer.unref) heartbeatTimer.unref();
   return true;
 }
-function releaseLock() { try { fs.unlinkSync(LOCK); } catch {} }
+function releaseLock() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  try { fs.unlinkSync(LOCK); } catch {}
+}
 
 function moveToPublished(file) {
   const destDir = L.ensureDir(L.CONFIG.paths.published_dir);
@@ -93,10 +107,14 @@ function spawnPrepare() {
   } catch (e) { log('spawn prepare failed: ' + e.message); }
 }
 
+// B4（2026-11-08）：改名逻辑收进 lib，prepare 与 run_due 共用一份
+function renameAll(dryRun) { L.renameAll(dryRun, log); }
+
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const state = L.loadState();
   if (!acquireLock()) { log('lock busy, skip'); return; }
+ renameAll(process.argv.includes('--dry-run'));
   try {
     // 品牌不能确认的成片直接移到「品牌待确认」，不留在自动发布队列（宝哥 2026-11-04 固化）
     // 暂停状态下也先执行，避免品牌未确认的成片一直堆在待发目录
@@ -106,12 +124,19 @@ async function main() {
       if (!dryRun) {
         const names = q.moved.slice(0, 5).map(m => m.file).join('、') + (q.moved.length > 5 ? ' 等' : '');
         notify('团购成片移入品牌待确认', `${q.moved.length} 条品牌未确认：${names}`);
-        wechat(`⚠️ 团购成片移入品牌待确认\n${q.moved.length} 条品牌未确认：${names}\n请确认品牌后再归位`);
       }
     }
 
     // 字幕闸门（宝哥 2026-11-04 固化）：新成片先 OCR 复核，失败移入「字幕待修复」，
     // 没有校对依据的手工新片暂缓发布。暂停状态下也继续扫描，避免坏字幕堆积。
+    // B（2026-11-08 宝哥要求）：缺 meta 但文件名能定品牌的成片，记一条审计（不伪造 meta.json）
+    if (!dryRun) {
+      try {
+        const legacy = L.auditLegacyNoMeta();
+        if (legacy.length) log(`legacy_no_meta in queue: ${legacy.length}`);
+      } catch (e) { log('audit legacy_no_meta failed: ' + e.message); }
+    }
+
     const sub = SG.auditInventory({ dryRun });
     if (sub.audited || sub.moved.length || sub.manual.length || sub.unavailable.length) {
       log(`subtitle audit: checked=${sub.audited} cached=${sub.cached} moved=${sub.moved.length}`
@@ -121,7 +146,6 @@ async function main() {
       if (sub.moved.length) {
         const names = sub.moved.slice(0, 5).map(m => m.file).join('、') + (sub.moved.length > 5 ? ' 等' : '');
         notify('团购成片字幕待修复', `${sub.moved.length} 条字幕复核失败：${names}`);
-        wechat(`⚠️ 团购成片字幕待修复\n${sub.moved.length} 条字幕复核失败，已移入「字幕待修复」：${names}`);
       }
       if (sub.manual.length) {
         const names = sub.manual.slice(0, 5).map(m => m.file).join('、') + (sub.manual.length > 5 ? ' 等' : '');
@@ -194,7 +218,6 @@ async function main() {
         log('no video in inventory, triggering prepare');
         spawnPrepare();
         notify('团购发布等素材', '已剪成片库存为空，正在自动剪辑补货');
-        wechat('⚠️ 团购发布等素材\n已剪成片库存为空，正在自动剪辑补货');
         L.savePlan(date, plan);
       }
       return;
@@ -203,23 +226,40 @@ async function main() {
     // 宝哥 2026-11-02：品牌不确定要联网核验，仍不确定就停下来跳过。
     // 文案明显是 ASR 乱码的成片跳过，避免把「特大粪」之类发出去。
     const priorityBrands = L.CONFIG.publish.priority_brands || [];
-    const priority = v => {
-      const i = priorityBrands.indexOf(v.brand);
-      return i < 0 ? priorityBrands.length : i;
-    };
-    const rank = v => (v.brand && v.brand_verified && !v.brand_needs_review) ? 0
-      : v.brand_needs_review ? 3 : 1;
-    // 宝哥指定的优先品牌先发（2026-11-03 奶茶），再按品牌可信度分拣
-    const sorted = [...videos].sort((a, b) => priority(a) - priority(b) || rank(a) - rank(b));
+    // 2026-11-10：用账号播放/出单数据给库存打分（品牌历史表现 + 品类质量 + 库存新鲜度），
+    // 数据缺失时自动退化成「优先品牌 + 品牌可信度」的旧顺序，不影响发布
+    const statsPaths = A.statsPaths(L.ROOT, L.CONFIG);
+    const loaded = A.loadAnalytics(statsPaths);
+    // 样本太少时打分噪声大于信号，直接退回旧顺序
+    const analytics = loaded && loaded.count >= 10 ? loaded : null;
+    const orders = A.loadOrders(statsPaths);
+    const mtimeOf = v => { try { return fs.statSync(v.path).mtimeMs; } catch { return null; } };
+    const sorted = QS.rankVideos(videos, {
+      analytics, orders, priorityBrands, now: Date.now(), mtimeOf,
+      weights: L.CONFIG.publish.queue_weights || {},
+    });
+    if (analytics) {
+      log(`queue scored by analytics ${analytics.count} works | top=${sorted[0] ? `${sorted[0].file}(${sorted[0].queue_score})` : 'none'}`);
+    }
     const brandConfident = L.brandConfirmed;
     const skippedBrandFiles = sorted.filter(v => !brandConfident(v)).map(v => v.file);
     const skippedBrand = skippedBrandFiles.length;
     for (const v of sorted) if (!brandConfident(v)) {
       log(`skip ${v.file}: brand unconfirmed (${v.brand || 'none'} conf=${v.brand_confidence})`);
     }
+    // 2026-11-11（宝哥拍板）：同品牌冷却 + 每日上限，挡住「一天七条鸡柳大人」式连发
+    const usage = L.brandUsage(date);
+    const rhythm = QS.filterBrandRhythm(sorted.filter(brandConfident), usage, {
+      cooldownMinutes: L.CONFIG.schedule.brand_cooldown_minutes,
+      dailyCap: L.CONFIG.schedule.brand_daily_cap,
+      now: Date.now(),
+    });
+    for (const b of rhythm.blocked) {
+      log(`skip ${b.video.file}: brand rhythm ${b.reason} (${b.brand})${b.next_at ? ` next=${b.next_at}` : ''}`);
+    }
     let picked = null;
     let skippedCopy = 0;
-    for (const v of sorted.filter(brandConfident)) {
+    for (const v of rhythm.kept) {
       // 未认证品牌不挂品牌话题，但门店仍按识别出的品牌添加（宝哥 2026-11-02 要求）
       const brandUncertain = !v.brand_verified;
       const publishVideo = brandUncertain ? { ...v, brand: null, locationBrand: v.brand } : v;
@@ -230,9 +270,11 @@ async function main() {
     }
     if (!picked) {
       if (dryRun) { log('DRY_RUN no publishable video in inventory'); return; }
+      const rhythmBlocked = !skippedBrand && rhythm.blocked.length > 0;
       item.status = 'pending';
-      item.reason = skippedBrand ? 'brand unconfirmed' : 'copy quality low';
-      const notifiedAt = skippedBrand ? item.brand_notified_at : item.quality_notified_at;
+      item.reason = rhythmBlocked ? 'brand rhythm' : skippedBrand ? 'brand unconfirmed' : 'copy quality low';
+      const notifiedAt = skippedBrand ? item.brand_notified_at
+        : rhythmBlocked ? item.rhythm_notified_at : item.quality_notified_at;
       const lastQ = notifiedAt ? Date.parse(notifiedAt) : 0;
       if (Date.now() - lastQ > 60 * 60 * 1000) {
         if (skippedBrand) {
@@ -240,12 +282,16 @@ async function main() {
           item.brand_notified_at = new Date().toISOString();
           log('brand unconfirmed, publish skipped');
           notify('团购发布等待品牌确认', `${skippedBrand} 条成片品牌不确定，已跳过：${names}`);
-          wechat(`⚠️ 团购发布等待品牌确认\n已跳过 ${skippedBrand} 条品牌不确定的成片：${names}\n（无品牌/待复核/置信度不足，未发布、未猜品牌）\n请人工审核确认品牌后告诉我再发；下次会先发能确定品牌的`);
+        } else if (rhythmBlocked) {
+          const brands = [...new Set(rhythm.blocked.map(b => b.brand))].slice(0, 3).join('、');
+          item.rhythm_notified_at = new Date().toISOString();
+          log(`brand rhythm blocked all ${rhythm.blocked.length} videos`);
+          notify('团购发布等待品牌冷却',
+            `${rhythm.blocked.length} 条成片的品牌在冷却期或已达每日上限：${brands}`);
         } else {
           item.quality_notified_at = new Date().toISOString();
           log('no clean copy in inventory, publish skipped');
           notify('团购发布等待文案', '成片口播识别质量不足，已跳过本轮');
-          wechat('⚠️ 团购发布等待文案\n库存成片口播识别质量不足，已跳过本轮；请人工检查');
         }
       }
       L.savePlan(date, plan);
@@ -258,8 +304,11 @@ async function main() {
     item.brand_uncertain = false;
     item.brand_topic_skipped = brandUncertain;
     item.copy = { title: copy.title, desc: copy.desc, topics: copy.topics };
+    item.category = copy.category || null;
+    item.queue_score = video.queue_score ?? null;
+    item.queue_why = video.queue_why || null;
     if (!dryRun) L.savePlan(date, plan);
-    log(`publishing ${video.file} | ${copy.title}`);
+    log(`publishing ${video.file} | ${copy.title} | score=${video.queue_score} (${video.queue_why || '-'})`);
 
     const { publishOne } = require('./publish_one');
     let result;
@@ -280,22 +329,26 @@ async function main() {
       item.published_at = new Date().toISOString();
       item.work_id = result.workId || null;
       item.location = result.loc || null;
+      item.product = result.product || null;
       // 发布已成功，归档失败不能导致重发：只记日志，作品仍计入历史
       try { item.moved_to = moveToPublished(video.path); }
       catch (e) { item.moved_to = null; log(`archive failed: ${e.message}`); }
       state.history.push({
         date, file: video.file, at: item.published_at,
         work_id: result.workId || null, title: copy.title,
+        // 2026-11-11：历史里补品牌，便于之后核对发布节奏/品牌分布
+        brand: video.brand || null,
       });
       state.used_title_suffix = [...(state.used_title_suffix || []), copy.title.split('，').pop()].slice(-20);
       L.saveState(state);
       L.savePlan(date, plan);
-      log(`PUBLISH_OK ${video.file} work_id=${result.workId}`);
-      const skipNames = skippedBrandFiles.slice(0, 3).join('、') + (skippedBrandFiles.length > 3 ? ' 等' : '');
-      const skipLine = skippedBrand ? `\n⏭️ 跳过 ${skippedBrand} 条品牌不确定的成片待人工审核：${skipNames}` : '';
-      notify('团购发布成功', `${video.file} 已发布${skippedBrand ? `；跳过 ${skippedBrand} 条品牌待确认` : ''}`);
-      const storeLine = result.loc && result.loc.ok ? `\n门店：${result.loc.selected}` : '\n⚠️ 未挂上门店';
-      wechat(`✅ 抖音已发布\n${copy.title}\n成片：${video.file}${storeLine}${result.workId ? `\n作品ID：${result.workId}` : ''}${skipLine}`);
+      log(`PUBLISH_OK ${video.file} work_id=${result.workId} product=${result.product && result.product.ok ? result.product.selected : 'none'}`);
+      const prodLine = result.product && result.product.ok
+        ? `\n🛒 团购商品：${result.product.selected}${result.product.price != null ? `（￥${result.product.price}）` : ''}`
+        : result.loc && result.loc.ok
+          ? `\n📍 门店：${result.loc.selected}（未挂团购商品）`
+          : '\n⚠️ 未挂团购商品，也未挂上门店';
+      notify('团购发布成功', `${video.file} 已发布${skippedBrand ? `；跳过 ${skippedBrand} 条品牌待确认` : ''}${prodLine}`);
     } else if (result.clickedPublish || result.reason === 'publish-result-unknown') {
       // reason 本身就说明发布点击已发生；即使上层忘了带 clickedPublish 也不能重试
       // 已经点过「发布」：不管是验证码、登录失效还是结果未知，都可能已经发出去，
@@ -306,14 +359,12 @@ async function main() {
       L.savePlan(date, plan);
       log(`PUBLISH_UNKNOWN ${video.file} 点击发布后未确认（${item.reason}），已移出自动队列`);
       notify('团购发布结果待核实', `${video.file} 点击发布后未收到确认，请人工核实`);
-      wechat(`⚠️ 抖音发布结果待核实\n成片：${video.file}\n已点击发布但页面未确认（${item.reason}），未自动重试；请到内容管理人工核实`);
       if (result.reason === 'auth' || result.reason === 'captcha') {
         state.paused = true;
         state.paused_reason = result.reason === 'auth' ? '登录失效，需要重新扫码' : '遇到验证码/安全校验';
         L.saveState(state);
         log(`PAUSE ${state.paused_reason}`);
         notify('团购发布已暂停', state.paused_reason);
-        wechat(`⛔ 抖音发布已暂停\n${state.paused_reason}\n请在电脑上重新扫码登录后恢复`);
       }
     } else if (result.reason === 'auth' || result.reason === 'captcha') {
       // 还没点发布就遇到验证码/登录失效：成片可以留队，恢复后原样再发
@@ -325,7 +376,6 @@ async function main() {
       L.savePlan(date, plan);
       log(`PAUSE ${state.paused_reason}`);
       notify('团购发布已暂停', state.paused_reason);
-      wechat(`⛔ 抖音发布已暂停\n${state.paused_reason}\n请在电脑上重新扫码登录后恢复`);
     } else if (result.reason === 'verify-failed') {
       // 已发布但审核不通过：不重发，移出队列交人工处理
       item.status = 'rejected';
@@ -335,7 +385,6 @@ async function main() {
       L.savePlan(date, plan);
       log(`PUBLISH_REJECTED ${video.file} status=${result.status}`);
       notify('团购作品审核不通过', `${video.file} 已发布但审核不通过，已移出队列`);
-      wechat(`❌ 抖音作品审核不通过\n成片：${video.file}\n已移出自动队列，请人工检查`);
     } else {
       item.retries = (item.retries || 0) + 1;
       item.reason = result.reason || result.error || 'unknown';
@@ -343,7 +392,6 @@ async function main() {
       L.savePlan(date, plan);
       log(`PUBLISH_FAIL ${video.file} ${item.reason}`);
       if (item.status === 'failed') {
-        wechat(`❌ 抖音发布失败\n成片：${video.file}\n原因：${item.reason}\n已重试 ${item.retries} 次，可在电脑上查看截图`);
       }
     }
   } finally {

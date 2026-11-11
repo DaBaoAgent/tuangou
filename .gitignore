@@ -11,3 +11,10 @@ __pycache__/
 
 # 本机一次性运行配置（含绝对路径）
 scripts/auto-edit/config.*.json
+
+# 本地虚拟环境与临时备份（只留源文件，备份不入库）
+.venv/
+backup_*/
+*.bak
+*.bak-*
+*.bak2-*

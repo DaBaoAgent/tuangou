@@ -14,6 +14,9 @@
   python scripts/auto-edit/auto_edit.py --clip 06E7424A --no-move --name 11月1日_炸鸡.mp4
   python scripts/auto-edit/auto_edit.py --all --no-move
   python scripts/auto-edit/auto_edit.py --brand-scan        # 只识别品牌不剪片
+  # 重剪库存：源素材已归档到「未剪素材/已剪」，直接指过去，别移动源
+  python scripts/auto-edit/auto_edit.py --source-dir 素材库/未剪素材/已剪 \
+      --clip <素材名> --no-move --name 重剪_xxx.mp4
 
 字幕人工校对：在 runtime/auto-edit/corrections/<素材文件名去扩展名>.json 写入
   {"lines": [{"text": "...", "start": 0.0, "end": 1.4}, ...]}
@@ -21,6 +24,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -39,8 +43,21 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv"}
 
-import brand_ocr  # noqa: E402  （同目录模块）
-import fx as opening_fx  # noqa: E402  （同目录模块）
+# A8（2026-11-08）：重依赖（numpy / opencv）改为按需导入，
+# --list 这类纯清单命令不再因为环境缺包直接起不来
+brand_ocr = None
+opening_fx = None
+
+
+def _heavy():
+    """真正要剪片/识别品牌时才加载重依赖，只列清单时不碰。"""
+    global brand_ocr, opening_fx
+    if brand_ocr is None:
+        import brand_ocr as _b  # noqa: E402  （同目录模块）
+        brand_ocr = _b
+    if opening_fx is None:
+        import fx as _f  # noqa: E402  （同目录模块）
+        opening_fx = _f
 
 PUNCT_RE = re.compile(
     r"[，。！？、；：,.!?;:'\"“”‘’（）()【】\[\]《》<>…—－\-~～·\s]+"
@@ -54,7 +71,12 @@ def log(msg):
 
 def load_config(path=None):
     with open(path or CONFIG_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        cfg = json.load(f)
+    # B1（2026-11-08）：config 里的相对路径以项目根为基准还原成绝对路径，配置里不再写死盘符
+    for key, val in (cfg.get("paths") or {}).items():
+        if isinstance(val, str) and val and not Path(val).is_absolute():
+            cfg["paths"][key] = str(ROOT / val)
+    return cfg
 
 
 def run(cmd, cwd=ROOT, check=True, capture=True):
@@ -433,12 +455,60 @@ def ass_time(t):
     return f"{h}:{m:02d}:{s:05.2f}"
 
 
-def build_ass(cfg, lines):
+def cover_centered_margin_v(cfg, cover_bars):
+    """cover 模式：把重打字幕垂直居中到模糊条中间。"""
+    if not cover_bars:
+        return int(cfg["subtitle"]["margin_v"])
+    H = int(cfg["video"]["height"])
+    pad = int(cfg["legacy_sub"].get("cover_pad", 18))
+    fs = float(cfg["subtitle"]["font_size"])
+    mids = []
+    for b in cover_bars:
+        y0 = max(0, int(b["y0"]) - pad)
+        y1 = min(H, int(b["y1"]) + pad)
+        if y1 > y0:
+            mids.append((y0 + y1) / 2.0)
+    if not mids:
+        return int(cfg["subtitle"]["margin_v"])
+    mid = sum(mids) / len(mids)
+    # Alignment=2：字底距底边 = margin_v；视觉中心约在字底上方 0.55*字号
+    mv = int(round(H - mid - fs * 0.55))
+    return max(60, min(H // 2, mv))
+
+
+def ass_bgr(rgb):
+    """配置里写 RGB（如 FFD400 黄），ASS 样式要 BBGGRR，这里转一下。"""
+    rgb = str(rgb or "").lstrip("#").strip()
+    if len(rgb) != 6:
+        return rgb.upper()
+    return (rgb[4:6] + rgb[2:4] + rgb[0:2]).upper()
+
+
+def build_ass(cfg, lines, margin_v=None, hook=None):
     sub = cfg["subtitle"]
     w = cfg["video"]["width"]
     h = cfg["video"]["height"]
     max_width = sub["max_width"]
     fs = sub["font_size"]
+    mv = int(sub["margin_v"] if margin_v is None else margin_v)
+    hook_cfg = cfg.get("hook") or {}
+    styles = [
+        f"Style: Cap,{sub['font_name']},{fs},&H00{sub['fill']},&H00FFFFFF,"
+        f"&H00{sub['outline_color']},&H00000000,{sub['font_bold']},0,0,0,100,100,0,0,1,"
+        f"{sub['outline']},{sub['shadow']},2,40,40,{mv},1"
+    ]
+    hook_fs = int(hook_cfg.get("font_size", 120))
+    if hook:
+        # Alignment=8：MarginV 是从画面顶边往下的距离，不用改字幕的底部 margin
+        # 2026-11-11 宝哥定样式：黄字 + 很窄的黑描边（不打白字，不和底部字幕撞）
+        hook_mv = int(round(h * float(hook_cfg.get("margin_top_ratio", 0.24))))
+        hook_fill = ass_bgr(hook_cfg.get("fill", sub["fill"]))
+        hook_oc = ass_bgr(hook_cfg.get("outline_color", sub["outline_color"]))
+        styles.append(
+            f"Style: Hook,{sub['font_name']},{hook_fs},&H00{hook_fill},&H00FFFFFF,"
+            f"&H00{hook_oc},&H00000000,{sub['font_bold']},0,0,0,100,100,0,0,1,"
+            f"{hook_cfg.get('outline', 2)},{hook_cfg.get('shadow', 0)},8,40,40,{hook_mv},1"
+        )
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {w}
@@ -449,7 +519,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{sub['font_name']},{fs},&H00{sub['fill']},&H00FFFFFF,&H00{sub['outline_color']},&H00000000,{sub['font_bold']},0,0,0,100,100,0,0,1,{sub['outline']},{sub['shadow']},2,40,40,{sub['margin_v']},1
+{chr(10).join(styles)}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -464,7 +534,212 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         events.append(
             f"Dialogue: 1,{ass_time(ln['start'])},{ass_time(ln['end'])},Cap,,0,0,0,,{tag}{text}"
         )
+    if hook and hook.get("text"):
+        text = hook["text"].replace("{", "（").replace("}", "）")
+        scale = 100.0
+        if len(text) * hook_fs > max_width:
+            scale = max(60.0, max_width / len(text) / hook_fs * 100.0)
+        dur = float(hook.get("duration") or hook_cfg.get("duration", 1.5))
+        extra = f"\\fscx{scale:.0f}\\fscy{scale:.0f}" if scale < 99.9 else ""
+        events.append(
+            f"Dialogue: 2,{ass_time(0)},{ass_time(dur)},Hook,,0,0,0,,"
+            f"{{\\fad(120,260){extra}}}{text}"
+        )
     return header + "\n".join(events) + "\n"
+
+
+HOOK_FILLER = re.compile(
+    r"^(?:姐妹们|宝子们|家人们|朋友们|兄弟们|哈喽|大家好|我跟你们说|我跟你说|听我说)+"
+)
+HOOK_PUNCT = re.compile(r"[，,。！？!?、；;：:\s]+")
+
+
+def _hook_phrases(lines, asr, max_chars):
+    """按词边界拼候选短句（带开始时间），避免把中文切入半截。"""
+    phrases = []
+    for seg in asr or []:
+        # 片尾常出现 0.0x 秒的幻觉段（如「我认真的吗我认真的吗」），先剔掉
+        try:
+            s0 = float(seg.get("start") or 0.0)
+            s1 = float(seg.get("end") or s0)
+        except (TypeError, ValueError):
+            s0 = s1 = 0.0
+        if s1 - s0 < 0.5:
+            continue
+        words = [
+            (str(w.get("w", "")).strip(), float(w.get("start") or s0))
+            for w in seg.get("words", [])
+        ]
+        words = [x for x in words if x[0]]
+        for i in range(len(words)):
+            phrase = ""
+            start = words[i][1]
+            for j in range(i, len(words)):
+                if len(phrase) + len(words[j][0]) > max_chars:
+                    break
+                phrase += words[j][0]
+                if len(phrase) >= 3:
+                    phrases.append((phrase, start, False))
+    for ln in lines or []:
+        text = str(ln.get("text", "")).strip()
+        if text:
+            phrases.append((text, float(ln.get("start") or 0.0), True))
+    return phrases
+
+
+def _ocr_band(cfg, clip, workdir, t, band):
+    """抽一帧、裁到烧录字幕带、OCR，返回该帧上的字幕文本（逐块）。"""
+    w = int(cfg["video"]["width"])
+    y0, y1 = band
+    frame = workdir / f"hook_ocr_{int(round(t * 10)):03d}.jpg"
+    try:
+        ffmpeg("-ss", f"{t:.2f}", "-i", str(clip), "-frames:v", "1",
+               "-vf", f"crop={w}:{y1 - y0}:0:{y0}", "-q:v", "3", str(frame))
+        blocks = brand_ocr._ocr_image(frame, max_side_len=2048)
+    except Exception as exc:
+        log(f"钩子读字幕失败 @{t:.1f}s：{exc}")
+        return []
+    return [clean_text(b.get("text", "")) for b in blocks if float(b.get("score") or 0) >= 0.5]
+
+
+def hook_from_legacy_ocr(cfg, clip, workdir, legacy, dur):
+    """源素材自带烧录字幕时，钩子文案直接读画面上的字幕，不走 ASR。
+
+    ASR 对 CTA 和品牌名常出错（“链接”识别成“练街”），2026-11-11 批量试跑
+    才发现错字会被顶上钩子卡。画面字幕是发布后观众实际看到的字，OCR 出来最可靠。
+    """
+    h = cfg.get("hook") or {}
+    if not h.get("enabled", False) or not legacy or brand_ocr is None:
+        return None
+    max_chars = int(h.get("max_chars", 10))
+    keywords = [str(k) for k in h.get("keywords", []) if str(k)]
+    window = float(h.get("duration", 1.5)) + 1.0
+    max_start = float(h.get("max_start_seconds", 9.0))
+    y0 = max(0, min(int(b["y0"]) for b in legacy))
+    y1 = min(int(cfg["video"]["height"]), max(int(b["y1"]) for b in legacy))
+    if y1 - y0 < 12:
+        return None
+    band = (y0, y1)
+    # 开头 2.5 秒以内的底部字幕不能再当钩子，会和卡片同字
+    early = "".join(_ocr_band(cfg, clip, workdir, min(1.0, max(0.0, dur * 0.15)), band))
+    t = max(window + 0.5, 3.0)
+    end = min(max_start, dur - 0.3)
+    best = None
+    while t <= end + 1e-6:
+        for text in _ocr_band(cfg, clip, workdir, t, band):
+            if not (4 <= len(text) <= max_chars):
+                continue
+            if early and text in early:
+                continue
+            if len(text) >= 6 and text[: len(text) // 2] == text[len(text) // 2:]:
+                continue
+            hits = sum(1 + min(len(k), 4) for k in keywords if k in text)
+            rhetorical = any(text.endswith(x) for x in ("吗", "吧", "呢"))
+            if not hits and not rhetorical:
+                continue
+            score = hits * 10.0 + (6 if rhetorical else 0)
+            score += 2 if 4 <= len(text) <= 7 else 0
+            score += 1.5 if t <= 6 else 0
+            if best is None or score > best[0]:
+                best = (score, text, t)
+        t += 1.0
+    if best:
+        return {
+            "text": best[1], "source": "ocr", "start": round(best[2], 2),
+            "duration": float(h.get("duration", 1.5)),
+        }
+    return None
+
+
+def pick_hook(cfg, lines, asr, fallback=None):
+    """开头 1.5 秒钩子文案（2026-11-11 宝哥拍板）。
+
+    只从已有口播/字幕里选，不编造卖点。规则：
+    - 必须带卖点关键词或疑问语气（吗/吧/呢），否则不加卡片；
+    - 必须发生在开头 1.5 秒之后，避免和画面里已有的第一句字幕重复（样片实测踩过）；
+    - 优先靠前、6~10 字、不是 CTA 尾巴的短句。
+    取不到返回 None（此时只保留推近运镜）。
+    """
+    h = cfg.get("hook") or {}
+    if not h.get("enabled", False):
+        return None
+    max_chars = int(h.get("max_chars", 10))
+    keywords = [str(k) for k in h.get("keywords", []) if str(k)]
+    # 只用自然断句的字幕行选词。从整段口播按字数硬截常切出半句话；没有字幕行
+    # （ASR 太碎/太糊）时硬截还会把识别错字直接顶上画面——2026-11-11 批量实测
+    # 出过「越上头赶紧出练街你」这种，按「宁可不加卡也不上错字」直接放弃。
+    phrases = [p for p in _hook_phrases(lines, asr, max_chars) if p[2]]
+    # 开头这段时间（钩子时长 + 1 秒）里已经出现在画面/口播里的文字，
+    # 钩子不能是它的重复——样片实测过上下两行同字，很难看。
+    window = float(h.get("duration", 1.5)) + 1.0
+    # 钩子是「开头」的卡片：只认开头几秒说出来的词。尾段 ASR 常是 CTA 或幻觉，
+    # 批量实测出过「越上头赶紧出练街你」（“链接”被识别成“练街”）。
+    max_start = float(h.get("max_start_seconds", 9.0))
+    early_parts = []
+    for seg in asr or []:
+        for w in seg.get("words", []):
+            try:
+                if float(w.get("start") or 0.0) < window:
+                    early_parts.append(str(w.get("w", "")))
+            except (TypeError, ValueError):
+                continue
+    for ln in lines or []:
+        try:
+            if float(ln.get("start") or 0.0) < window:
+                early_parts.append(str(ln.get("text", "")))
+        except (TypeError, ValueError):
+            continue
+    early = "".join(early_parts)
+    best = None
+    for raw, start, from_line in phrases:
+        text = HOOK_PUNCT.sub("", HOOK_FILLER.sub("", raw))
+        if not (4 <= len(text) <= max_chars):
+            continue
+        if start < window or start > max_start:
+            continue
+        # 整句复读（ASR 幻觉的常见形态）：前后两半相同就不当钩子
+        if len(text) >= 6 and text[: len(text) // 2] == text[len(text) // 2:]:
+            continue
+        if early and (text in early or early.endswith(text)):
+            continue
+        hits = sum(1 + min(len(k), 4) for k in keywords if k in text)
+        rhetorical = any(text.endswith(x) for x in ("吗", "吧", "呢"))
+        if not hits and not rhetorical:
+            continue
+        score = hits * 10.0
+        # 字幕行是按词边界切好的自然短句，优先于从整段口播里硬截的窗口
+        if from_line:
+            score += 4
+        if rhetorical:
+            score += 6
+        if text[:1] in "别就这我你谁真":
+            score += 3
+        # 1.5 秒的卡片 4~7 字最利落；凑到 10 字往往是从句子中间切出来的
+        if 4 <= len(text) <= 7:
+            score += 2
+        elif len(text) >= 9:
+            score -= 1
+        if text.endswith(("啦", "了", "的")):
+            score -= 3
+        if any(x in text for x in ("链接", "下单", "拍下")):
+            score -= 2
+        if start <= 6:
+            score += 1.5
+        elif start > 10:
+            score -= 2
+        if best is None or score > best[0]:
+            best = (score, text, start)
+    if best:
+        # 现在只从字幕行选，source 统一记 line，便于回查是否有人上过 ASR 硬截的词
+        return {
+            "text": best[1], "source": "line", "start": round(best[2], 2),
+            "duration": float(h.get("duration", 1.5)),
+        }
+    if fallback:
+        text = HOOK_PUNCT.sub("", HOOK_FILLER.sub("", str(fallback)))
+        if 4 <= len(text) <= max_chars and any(k in text for k in keywords):
+            return {"text": text, "source": "fallback", "duration": float(h.get("duration", 1.5))}
+    return None
 
 
 # ---------------------------------------------------------------- legacy subtitle bar
@@ -590,7 +865,7 @@ def detect_legacy_bars(cfg, video, workdir, dur):
 # ---------------------------------------------------------------- render
 
 def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx_path=None,
-           cover_bars=None):
+           cover_bars=None, hook=None):
     v = cfg["video"]
     a = cfg["audio"]
     W, H, fps = v["width"], v["height"], v["fps"]
@@ -624,6 +899,17 @@ def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx
         fc.append(f"[cv{i}b]crop={W}:{y1 - y0}:0:{y0},boxblur={blur}:3[cv{i}blur]")
         fc.append(f"[cv{i}a][cv{i}blur]overlay=0:{y0}:enable='{en}'[cv{i}o]")
         cur = f"[cv{i}o]"
+    # 2026-11-11：开头 1.5 秒轻微推近 + 缓慢回中，给首帧一点运动感（2 秒跳出 62%）。
+    # 放在所有 overlay 之后、ass 之前：自带字幕的模糊条会跟着一起缩放，坐标不会错位。
+    hook_cfg = cfg.get("hook") or {}
+    punch = float(hook_cfg.get("punch_in", 1.0) or 1.0)
+    if hook_cfg.get("enabled", False) and punch > 1.001:
+        hd = max(0.2, float(hook_cfg.get("duration", 1.5)))
+        fc.append(
+            f"{cur}scale=w='trunc(iw*{punch})':h='trunc(ih*{punch})':flags=lanczos,setsar=1,"
+            f"crop={W}:{H}:x='(in_w-out_w)/2':y='(in_h-out_h)/2*(1-min(t/{hd},1))'[punch]"
+        )
+        cur = "[punch]"
     tail = []
     if ass_rel:
         tail.append(f"ass={ass_rel}:fontsdir=runtime/asr-models")
@@ -694,7 +980,123 @@ def verify_output(cfg, out_path, workdir, expect_dur):
 
 # ---------------------------------------------------------------- pipeline
 
+def find_workdir_for_film(cfg, film):
+    """成片 → 剪辑工作目录：按 meta.output 的 basename 匹配，其次退回同名目录。"""
+    work_root = Path(cfg["paths"]["work_dir"])
+    base = film.name
+    if work_root.exists():
+        for d in work_root.iterdir():
+            if not d.is_dir():
+                continue
+            meta_path = d / "meta.json"
+            if not meta_path.exists():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if Path(str(meta.get("output") or "")).name == base:
+                return d, meta
+    fallback = work_root / film.stem
+    if (fallback / "meta.json").exists():
+        try:
+            return fallback, json.loads((fallback / "meta.json").read_text(encoding="utf-8"))
+        except Exception:
+            return fallback, {}
+    return None, {}
+
+
+def hook_for_existing(cfg, film, workdir, meta, dur):
+    """给已经剪好的成片选钩子文案（不再推近，只叠卡）。
+
+    文案优先级和正常剪辑一致：人工/已成片字幕行 > 画面烧录字幕 OCR。
+    成片里的字幕行能直接给出时间，OCR 只在没有字幕行时用。
+    """
+    lines = [ln for ln in (meta.get("lines") or []) if ln.get("text")]
+    hook = pick_hook(cfg, lines, None) if lines else None
+    if hook:
+        return hook
+    legacy = meta.get("legacy_sub") or []
+    if not legacy:
+        bars = (meta.get("subtitle_repair") or {}).get("cover_bars") or []
+        if bars:
+            legacy = [{
+                "y0": min(int(b["y0"]) for b in bars),
+                "y1": max(int(b["y1"]) for b in bars),
+            }]
+    if not legacy:
+        # 兜底：新版成片字幕带（audit_subs 实测 y≈1464–1557），留点余量
+        legacy = [{"y0": 1400, "y1": 1600}]
+    return hook_from_legacy_ocr(cfg, film, workdir, legacy, dur)
+
+
+def render_hook_only(cfg, film, ass_rel, out_path):
+    """只重编码画面叠一张钩子卡：不推近、不再烧字幕；音轨能直拷就直拷。"""
+    v = cfg["video"]
+    info = probe(film)
+    acodec = next((s.get("codec_name") for s in info["streams"]
+                   if s.get("codec_type") == "audio"), None)
+    audio = ["-c:a", "copy"] if acodec == "aac" else ["-c:a", "aac", "-b:a", v["audio_bitrate"]]
+    cmd = [
+        "ffmpeg", "-hide_banner", "-y",
+        "-i", str(film),
+        "-vf", f"ass={ass_rel}:fontsdir=runtime/asr-models,format=yuv420p",
+        "-c:v", v["codec"], "-crf", str(v["crf"]), "-preset", v["preset"],
+        "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+        *audio,
+        "-movflags", "+faststart",
+        str(out_path),
+    ]
+    run(cmd)
+
+
+def hook_only(cfg, film, args):
+    """29 条缺原始素材的库存片：不重剪，只在开头叠钩子卡（宝哥 2026-11-11）。"""
+    _heavy()
+    t0 = time.time()
+    workdir, meta = find_workdir_for_film(cfg, film)
+    if workdir is None:
+        raise RuntimeError(f"找不到剪辑工作目录：{film.name}")
+    dur = source_duration(film)
+    log(f"只叠钩子卡 {film.name}（{dur:.2f}s）")
+    hook = hook_for_existing(cfg, film, workdir, meta, dur)
+    if not hook:
+        log("没有合格钩子文案，跳过（宁可不加卡也不上错字）")
+        return {"clip": str(film), "output": None, "skipped": True, "hook": None}
+
+    out_dir = Path(cfg["paths"]["output_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / (args.name or f"{film.stem}.mp4")
+    if args.skip_existing and out_path.exists():
+        log(f"已存在，跳过：{out_path.name}")
+        return {"clip": str(film), "output": str(out_path), "skipped": True, "hook": hook}
+
+    ass_path = workdir / "hook_only.ass"
+    ass_path.write_text(build_ass(cfg, [], hook=hook), encoding="utf-8")
+    ass_rel = os.path.relpath(ass_path, ROOT).replace("\\", "/")
+    render_hook_only(cfg, film, ass_rel, out_path)
+
+    check_dir = workdir / "hook_only"
+    check_dir.mkdir(exist_ok=True)
+    check = verify_output(cfg, out_path, check_dir, dur)
+    meta["hook"] = hook
+    meta["hook_only"] = True
+    (workdir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    log(f"钩子：{hook['text']}（{hook['source']}）")
+    if check["ok"]:
+        log(f"自检通过：{check['size']} {check['fps']:.1f}fps {check['duration']:.2f}s")
+    else:
+        log(f"自检异常：{check['problems']}")
+    log(f"成片：{out_path}（用时 {time.time() - t0:.1f}s）")
+    return {"clip": str(film), "output": str(out_path), "hook": hook, "verify": check,
+            "elapsed_sec": round(time.time() - t0, 1)}
+
+
 def process_clip(cfg, clip, args):
+    _heavy()
     t0 = time.time()
     stem = clip.stem
     workdir = Path(cfg["paths"]["work_dir"]) / stem
@@ -748,6 +1150,10 @@ def process_clip(cfg, clip, args):
             to_simplified(asr)
             asr_path.write_text(json.dumps(asr, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # 校对稿是人工核对过的字，后面即便跳过字幕层也要留给钩子选词
+    corr_lines = list(lines) if (corrections and corrections.get("lines")) else []
+
+    ass_mv = None
     if skip_subs or skip_by_correction:
         if not skip_by_correction:
             log("按规则跳过字幕环节：不加黑条、不叠加字幕")
@@ -760,9 +1166,9 @@ def process_clip(cfg, clip, args):
         if not lines:  # 没有校对稿时才用 ASR 结果
             lines = build_lines(asr, dur, cfg)
         if lines:
-            ass_path = workdir / "subs.ass"
-            ass_path.write_text(build_ass(cfg, lines), encoding="utf-8")
-            ass_rel = str(ass_path.relative_to(ROOT)).replace("\\", "/")
+            ass_mv = cover_centered_margin_v(cfg, cover_bars) if cover_bars else int(cfg["subtitle"]["margin_v"])
+            if cover_bars:
+                log(f"cover 字幕垂直居中：margin_v={ass_mv}（相对模糊条）")
         else:
             log("没有可用字幕，只出画面")
         (workdir / "lines.json").write_text(
@@ -775,6 +1181,41 @@ def process_clip(cfg, clip, args):
         cfg, clip, workdir, asr_text=asr_text, force=args.force_brand
     )
 
+    # 2026-11-11（宝哥拍板）：开头 1.5 秒钩子。字幕按规则跳过时仍可加钩子卡，
+    # 只有校对稿明确写「skip」（只出画面）才不加。跳过了转写时用缓存 asr.json 选词。
+    hook = None
+    if not skip_by_correction and skip_subs and legacy and not corr_lines:
+        # 跳过字幕且没有校对稿：钩子直接读画面上的烧录字幕
+        hook = hook_from_legacy_ocr(cfg, clip, workdir, legacy, dur)
+    elif not skip_by_correction:
+        hook_asr = asr
+        hook_lines = corr_lines or lines
+        if not hook_asr and not lines:
+            cache = workdir / "asr.json"
+            if cache.exists():
+                try:
+                    hook_asr = json.loads(cache.read_text(encoding="utf-8"))
+                    to_simplified(hook_asr)
+                except Exception as exc:
+                    log(f"钩子读取缓存 ASR 失败：{exc}")
+                    hook_asr = []
+        # 跳过字幕的素材没有 lines，用 build_lines 现切一份自然短句给钩子选词，
+        # 比从整段口播里按字数硬截更不容易切出半句话
+        if not hook_lines and hook_asr:
+            try:
+                hook_lines = build_lines(hook_asr, dur, cfg)
+            except Exception as exc:
+                log(f"钩子切句失败：{exc}")
+                hook_lines = []
+        hook = pick_hook(cfg, hook_lines, hook_asr, fallback=brand.get("product") or brand.get("brand"))
+    if hook:
+        log(f"开头钩子：{hook['text']}（{hook['duration']}s，{hook['source']}）")
+    if lines or hook:
+        ass_path = workdir / "subs.ass"
+        mv = ass_mv if ass_mv is not None else int(cfg["subtitle"]["margin_v"])
+        ass_path.write_text(build_ass(cfg, lines, margin_v=mv, hook=hook), encoding="utf-8")
+        ass_rel = str(ass_path.relative_to(ROOT)).replace("\\", "/")
+
     # 字幕被跳过时仍用 ASR 文本给 BGM 选曲（结果已缓存，不重复识别）
     hint = asr_text + stem + (brand.get("brand") or "") + (brand.get("store") or "")
     bgm = pick_bgm(cfg, hint)
@@ -785,10 +1226,37 @@ def process_clip(cfg, clip, args):
         n_frames = len(list(Path(fx_frames).glob("*.png")))
         log(f"片头白线冲刺：{n_frames} 帧 + whoosh 音效")
 
-    name = args.name or f"{datetime.now().month}月{datetime.now().day}日_{stem[:8]}.mp4"
     out_dir = Path(cfg["paths"]["output_dir"])
+    if args.name:
+        name = args.name
+    else:
+        # 同一天同品牌的多条素材前 8 个字相同，直接拼日期会互相覆盖；
+        # 加源文件名指纹，保证唯一且可复现（--skip-existing 仍按同名判断）
+        key = hashlib.md5(stem.encode("utf-8")).hexdigest()[:6]
+        name = f"{datetime.now().month}月{datetime.now().day}日_{stem[:8]}_{key}.mp4"
     out_path = out_dir / name
-    render(cfg, clip, workdir, ass_rel, bgm, dur, out_path, fx_frames, sfx_path, cover_bars)
+    # A6（2026-11-08）：--skip-existing 按参数语义真正生效——同名成片已在 +
+    # 上次自检 ok + 素材没比成片更新，就跳过不重渲，别整批再转一遍
+    if args.skip_existing and out_path.exists():
+        meta_path = workdir / "meta.json"
+        prev = {}
+        if meta_path.exists():
+            try:
+                prev = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                prev = {}
+        prev_ok = bool((prev.get("verify") or {}).get("ok"))
+        try:
+            src_older = clip.stat().st_mtime <= out_path.stat().st_mtime
+        except OSError:
+            src_older = False
+        if prev_ok and src_older:
+            log(f"跳过（同名成片已存在且自检通过）：{out_path.name}")
+            return {
+                "clip": str(clip), "output": str(out_path), "skipped": True,
+                "verify": prev.get("verify") or {"ok": True},
+            }
+    render(cfg, clip, workdir, ass_rel, bgm, dur, out_path, fx_frames, sfx_path, cover_bars, hook)
 
     check = verify_output(cfg, out_path, workdir, dur)
     brand_ocr.write_index(cfg, stem, clip, brand, out_path)
@@ -801,11 +1269,26 @@ def process_clip(cfg, clip, args):
         "legacy_sub": legacy,
         "subtitle_skipped": skip_subs,
         "lines": lines,
+        "hook": hook,
         "opening_fx": bool(fx_frames),
         "verify": check,
         "elapsed_sec": round(time.time() - t0, 1),
     }
-    (workdir / "meta.json").write_text(
+    # 重剪同一条素材会覆盖 meta.json，上一版成片与自检记录就查不到了；
+    # 成片名变了（重剪/改名）就先把旧 meta 备份一份再写
+    meta_path = workdir / "meta.json"
+    if meta_path.exists():
+        try:
+            prev = json.loads(meta_path.read_text(encoding="utf-8"))
+            prev_out = Path(prev.get("output", "")).name
+        except Exception:
+            prev_out = ""
+        if prev_out and prev_out != out_path.name:
+            bak = workdir / f"meta.json.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            if not bak.exists():
+                shutil.copy2(meta_path, bak)
+                log(f"旧 meta 已备份：{bak.name}")
+    meta_path.write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
@@ -840,12 +1323,50 @@ def main():
     ap.add_argument("--force-brand", action="store_true", help="忽略品牌识别缓存重新扫描")
     ap.add_argument("--config", help="改用指定配置文件（不同素材目录/输出目录时使用）")
     ap.add_argument("--out-dir", help="覆盖输出目录（同步盘先渲到本地再拷入时用）")
+    ap.add_argument("--source-dir", help="覆盖素材目录（重剪已归档的源素材时用，如 素材库/未剪素材/已剪）")
+    ap.add_argument("--hook-only", action="store_true",
+                    help="库存成片只叠开头钩子卡：不推近、不重烧字幕、不动音频（缺原始素材的片用）")
     args = ap.parse_args()
     cfg = load_config(args.config)
+    stock_dir = cfg["paths"]["output_dir"]  # --out-dir 覆盖前先记住库存目录
     if args.out_dir:
         cfg["paths"]["output_dir"] = args.out_dir
+    if args.source_dir:
+        cfg["paths"]["source_dir"] = args.source_dir
+
+    if args.hook_only:
+        if not args.clip:
+            log("--hook-only 需要 --clip 指定成片名")
+            return
+        vdir = Path(stock_dir)
+        if not vdir.is_absolute():
+            vdir = ROOT / vdir
+        cand = Path(args.clip)
+        if not cand.is_absolute():
+            exact = vdir / args.clip
+            cand = exact if exact.exists() else None
+        if cand is None or not cand.exists():
+            hits = [p for p in vdir.iterdir()
+                    if p.is_file() and p.suffix.lower() in (".mp4", ".mov", ".mkv")
+                    and args.clip in p.name]
+            if len(hits) != 1:
+                log(f"成片匹配到 {len(hits)} 条，请写更长片段：")
+                for p in hits:
+                    print(f"  {p.name}")
+                return
+            cand = hits[0]
+        try:
+            res = hook_only(cfg, cand, args)
+            log("完成 1/1 条" if not res.get("skipped") else "跳过 1 条")
+        except Exception as exc:
+            import traceback
+
+            log(f"失败 {cand.name}：{exc}")
+            traceback.print_exc()
+        return
 
     if args.brand_scan:
+        _heavy()
         clips = find_brand_clips(cfg, pattern=args.clip)
         if not clips:
             log("没有匹配的素材")

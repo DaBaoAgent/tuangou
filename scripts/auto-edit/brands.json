@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "团购品牌目录。识别时用 aliases 与画面 OCR / 口播文本做规范化匹配；别名至少 2 个字符。新增品牌请补 id / name / aliases / category。verified=true 表示宝哥已确认过该品牌名。",
+  "note": "团购品牌目录。识别时用 aliases 与画面 OCR / 口播文本做规范化匹配；别名至少 2 个字符。新增品牌请补 id / name / aliases / category。verified=true 表示品牌名已确认（宝哥确认或联网核实）；宝哥 2026-11-10 明确：新品牌能联网查证的自己查，不要来问。",
   "brands": [
     {
       "id": "linyu_zhaji",
@@ -36,9 +36,9 @@
         "LUCKINCOFFEE"
       ],
       "category": "咖啡",
-      "verified": false,
+      "verified": true,
       "stores": [],
-      "note": "宝哥 2026-11-01：素材库里的咖啡品牌只有瑞幸，没有库迪；读到 Cotti/库迪 一律不认"
+      "note": "宝哥 2026-11-01：素材库里的咖啡品牌只有瑞幸，没有库迪；读到 Cotti/库迪 一律不认；2026-11-11 联网核实：瑞幸咖啡官网与官方点单有小黄油系列，「小黄油美式」为在售主力款"
     },
     {
       "id": "yeye_bupaocha",
@@ -52,26 +52,16 @@
       "stores": []
     },
     {
-      "id": "mrx",
-      "name": "MR.X",
-      "aliases": [
-        "MR.X",
-        "MRX"
-      ],
-      "category": "炸物小吃",
-      "verified": false,
-      "stores": [],
-      "note": "2026-11-01 抽帧：B8E05EEA 深红底明确读到 MR.X，口播卖鸡柳+薯条+年糕三合一、秋季狂欢特大份"
-    },
-    {
       "id": "jiliu_daren",
       "name": "鸡柳大人",
       "aliases": [
         "鸡柳大人",
-        "姬鲁大人"
+        "姬鲁大人",
+        "MR.X",
+        "MRX"
       ],
       "category": "炸物小吃",
-      "verified": false,
+      "verified": true,
       "stores": [],
       "note": "2026-11-04 抽帧：红色手提袋、桶身与门店招牌大字均为「鸡柳大人」，招牌产品为鸡柳+年糕+薯条三合一；口播 ASR 误读成「姬鲁大人」。包装上的小字 MR 会被 OCR 误配成 MR.X，不能据此判品牌"
     },
@@ -130,9 +120,9 @@
         "山中无老虎"
       ],
       "category": "火锅",
-      "verified": false,
+      "verified": true,
       "stores": [],
-      "note": "2026-11-02 宝哥手动标注：0C671B8E、3B1D9E6F 两条海鲜大咖蛙蛙煲为山中无老虎"
+      "note": "2026-11-02 宝哥手动标注：0C671B8E、3B1D9E6F 两条海鲜大咖蛙蛙煲为山中无老虎；2026-11-11 联网核实：山中无老虎·鱼蛙火锅（盐城山中无老虎餐饮管理有限公司，2021 年创立，连锁加盟），2026 暑期推「海鲜大咖蛙蛙煲」，百度百科/小红书/天眼查可查"
     },
     {
       "id": "coco_duke",
@@ -157,9 +147,9 @@
         "GUMING"
       ],
       "category": "茶饮",
-      "verified": false,
+      "verified": true,
       "stores": [],
-      "note": "2026-11-03 宝哥手动在成片文件名标注：古茗；未认证，发布挂门店但不挂品牌话题"
+      "note": "2026-11-03 宝哥在成片文件名标注：古茗；2026-11-11 联网核实：古茗茶饮（GUMING），2010 年创立，古茗控股港交所 01364，官网 gumingnc.com，2026-06 末门店 14,351 家，可挂品牌话题"
     },
     {
       "id": "chabaidao",
@@ -277,6 +267,216 @@
       "verified": false,
       "stores": [],
       "note": "2026-11-04 宝哥在百度同步盘「品牌待确认」目录手动标注：4 条京城奶皮子成片为兰熊鲜奶"
+    },
+    {
+      "id": "auto_e58fa4e9b281",
+      "name": "古鲁特",
+      "aliases": [
+        "古鲁特"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "auto_e5969ce5b1b1",
+      "name": "喜山奈",
+      "aliases": [
+        "喜山奈"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "auto_e5ba93e8bfaa",
+      "name": "库迪",
+      "aliases": [
+        "库迪"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "auto_e69fa0e6aaac",
+      "name": "柠檬森林",
+      "aliases": [
+        "柠檬森林"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "auto_e79c9fe88cb6",
+      "name": "真茶屋",
+      "aliases": [
+        "真茶屋"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "auto_e88b8fe68e8c",
+      "name": "苏掌柜藏书羊肉",
+      "aliases": [
+        "苏掌柜藏书羊肉",
+        "苏掌柜",
+        "藏书羊肉"
+      ],
+      "category": null,
+      "verified": true,
+      "stores": [],
+      "note": "user-confirmed brand name 2026-11-07"
+    },
+    {
+      "id": "auto_e88c89e6b28f",
+      "name": "茉沏",
+      "aliases": [
+        "茉沏"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "auto_e991abe99c87",
+      "name": "鑫震源",
+      "aliases": [
+        "鑫震源"
+      ],
+      "category": null,
+      "verified": false,
+      "stores": [],
+      "note": "auto-added 2026-11-07 from clip file names"
+    },
+    {
+      "id": "dezhuang",
+      "name": "德庄火锅",
+      "aliases": [
+        "德庄火锅",
+        "德庄"
+      ],
+      "category": "火锅",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-08 宝哥提供两条成片，指定按德庄火锅发布"
+    },
+    {
+      "id": "zhengxin_jipai",
+      "name": "正新鸡排",
+      "aliases": [
+        "正新鸡排",
+        "正新"
+      ],
+      "category": "炸鸡",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：上海正新食品集团旗下炸鸡连锁，官网 zhengxinfood.com"
+    },
+    {
+      "id": "chaballet",
+      "name": "茶芭蕾新疆酸奶",
+      "aliases": [
+        "茶芭蕾新疆酸奶",
+        "茶芭蕾"
+      ],
+      "category": "茶饮",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：大众点评有门店「茶芭蕾·新疆酸奶」（龙湖狮山天街店）"
+    },
+    {
+      "id": "chapubu",
+      "name": "茶瀑布",
+      "aliases": [
+        "茶瀑布",
+        "茶瀑布脚本"
+      ],
+      "category": "茶饮",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：沪上阿姨 2024-03 推出的国风轻乳茶子品牌，官网 chafalls.com"
+    },
+    {
+      "id": "baozhugong",
+      "name": "煲珠公",
+      "aliases": [
+        "煲珠公"
+      ],
+      "category": "茶饮",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：广西南宁 2020 年起家的老红糖珍珠奶茶品牌，官网 xiaolu-t.cn，有百度百科词条"
+    },
+    {
+      "id": "chuntian_tea",
+      "name": "椿田熟成茶行",
+      "aliases": [
+        "椿田熟成茶行",
+        "椿田"
+      ],
+      "category": "茶饮",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：上海起家的熟成茶品牌，2025-04 全国首店开在上海新天地"
+    },
+    {
+      "id": "wutong_laolao",
+      "name": "梧桐姥姥",
+      "aliases": [
+        "梧桐姥姥"
+      ],
+      "category": "茶饮",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：苏州市梧桐姥姥餐饮管理有限公司，2021 年起家，苏州约 50 家门店（36氪/咖门报道），产品线含白月光、腔调"
+    },
+    {
+      "id": "xijian_chashan",
+      "name": "喜见茶山",
+      "aliases": [
+        "喜见茶山",
+        "喜见茶山茶饮",
+        "CALLITEA"
+      ],
+      "category": "茶饮",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 抽帧确认杯身 logo 为「喜见茶山 CALLITEA」；2026-11-10 联网核实：四川喜见茶山品牌管理有限公司，大众点评有 CALLITEA 门店"
+    },
+    {
+      "id": "samyang",
+      "name": "三养",
+      "aliases": [
+        "三养联名",
+        "三养火鸡",
+        "火鸡辣酱"
+      ],
+      "category": "速食",
+      "verified": true,
+      "stores": [],
+      "note": "auto-added 2026-11-10 from 11月7日 clip file names；2026-11-10 联网核实：韩国三养食品 SAMYANG（火鸡面/Buldak）旗下品牌，三养食品(上海)有限公司。注意是预包装食品品牌、没有本地生活门店；「袁记云饺和三养联名」这类成片的商户是袁记云饺，必须挂袁记云饺品牌和门店，不能按三养发（定位会落空，发布前会被 location-missing 拦下）"
+    },
+    {
+      "id": "yuanji_yunjiao",
+      "name": "袁记云饺",
+      "aliases": [
+        "袁记云饺",
+        "袁记"
+      ],
+      "category": "水饺",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-10 联网核实：袁记食品集团股份有限公司（广州起家），全国 4000+ 门店、江苏约 250 家，官网 yuanjiyunjiao.com.cn。11 月 7 日批次有 4 条「袁记云饺×三养」联名款成片，商户按袁记云饺挂门店"
     }
   ],
   "suspected": []

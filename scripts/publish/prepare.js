@@ -4,8 +4,23 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const L = require('./lib');
+const SG = require('./subtitle_gate');
 
-const PYTHON = 'C:/Users/20200/AppData/Local/Programs/Python/Python312/python.exe';
+// A5（2026-11-08）：剪辑用的 Python 也走候选链，不再死绑某一个安装路径
+let PYTHON_EXE = null;
+function python() {
+  if (!PYTHON_EXE) {
+    // A（2026-11-08 宝哥要求）：项目自带 .venv 排第一（剪片要 faster-whisper），
+    // 不可用时自动落到后面的候补解释器；不抛错、不中断流程。TUANGOU_PYTHON 仍由 lib 优先。
+    PYTHON_EXE = L.resolvePython([
+      path.join(L.ROOT, '.venv/Scripts/python.exe'),
+      'D:/@kaifa/tools/python-media/Scripts/python.exe',
+      'C:/Users/20200/AppData/Local/Programs/Python/Python312/python.exe',
+    ], 'import numpy, faster_whisper');
+    if (!PYTHON_EXE) throw new Error('找不到可用的 Python（需要 numpy）');
+  }
+  return PYTHON_EXE;
+}
 const AUTO_EDIT = path.join(L.ROOT, 'scripts/auto-edit/auto_edit.py');
 const BUFFER = 2;
 
@@ -17,7 +32,8 @@ function log(msg) {
 }
 
 function sourceClips() {
-  const dir = path.join(L.ROOT, '素材库/未剪素材');
+  // B2（2026-11-08）：素材目录读配置，不再写死目录名
+  const dir = L.CONFIG.paths.source_dir || path.join(L.ROOT, '素材库/未剪素材');
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
     .filter(f => /\.(mp4|mov|mkv)$/i.test(f))
@@ -30,10 +46,6 @@ function countFinished() {
   return fs.readdirSync(dir)
     .filter(f => /\.(mp4|mov|mkv)$/i.test(f) && !f.startsWith('_') && !f.startsWith('审核样片')).length;
 }
-function wechat(text) {
-  const r = L.pushWeChat(text);
-  if (!r.ok) log(`wechat push failed: ${r.error}`);
-}
 function countSourceClips() { return sourceClips().length; }
 // 刚复制进来的素材可能还没写完，等文件稳定 2 分钟再剪
 function sourcesReady() {
@@ -44,9 +56,20 @@ const LOCK = path.join(L.CONFIG.paths.work_dir, 'prepare.lock');
 
 function main() {
   const dryRun = process.argv.includes('--dry-run');
-  if (!dryRun && fs.existsSync(LOCK) && Date.now() - fs.statSync(LOCK).mtimeMs < 4 * 60 * 60 * 1000) {
-    log('prepare already running, skip');
-    return;
+  // A7（2026-11-08）：锁里记 pid，先看这个 pid 还活不活；只有进程真没了才按超时兜底接管
+  const lockTtlMs = Math.max(60, Number(L.CONFIG.publish.prepare_lock_ttl_sec ?? 14400)) * 1000;
+  if (!dryRun && fs.existsSync(LOCK)) {
+    let owner = 0;
+    try { owner = Number(String(fs.readFileSync(LOCK, 'utf8')).trim()) || 0; } catch {}
+    const alive = owner > 0 && L.isPidAlive(owner);
+    let fresh = false;
+    try { fresh = Date.now() - fs.statSync(LOCK).mtimeMs < lockTtlMs; } catch {}
+    if (alive || fresh) {
+      log(`prepare already running, skip (pid=${owner || '?'} alive=${alive} fresh=${fresh})`);
+      return;
+    }
+    log(`stale prepare lock (pid=${owner || '?'} dead), taking over`);
+    try { fs.unlinkSync(LOCK); } catch {}
   }
   if (!dryRun) { L.ensureDir(path.dirname(LOCK)); fs.writeFileSync(LOCK, String(process.pid)); }
   try { run(); } finally { if (!dryRun) { try { fs.unlinkSync(LOCK); } catch {} } }
@@ -93,20 +116,22 @@ function runEdit(args) {
   log(`running auto_edit ${args.join(' ')}`);
   const before = countFinished();
   try {
-    const out = execFileSync(PYTHON, [AUTO_EDIT, ...args], {
+    const out = execFileSync(python(), [AUTO_EDIT, ...args], {
       cwd: L.ROOT, timeout: 45 * 60 * 1000, maxBuffer: 32 * 1024 * 1024, encoding: 'utf8',
     });
     log('auto_edit done\n' + out.split('\n').slice(-25).join('\n'));
     const added = countFinished() - before;
     if (added > 0) {
-      wechat(`🎬 自动剪辑完成\n新增 ${added} 个成片，待发库存 ${L.pickVideo().length} 个`);
+      log(`剪辑完成：新增 ${added} 个成片`);
     }
   } catch (e) {
     log('auto_edit failed: ' + e.message);
     if (e.stdout) log('stdout tail:\n' + String(e.stdout).split('\n').slice(-20).join('\n'));
-    wechat(`❌ 自动剪辑失败\n${String(e.message || e).slice(0, 200)}`);
   }
 }
+
+// B4（2026-11-08）：改名逻辑收进 lib，prepare 与 run_due 共用一份
+function renameAll(dryRun) { L.renameAll(dryRun, log); }
 
 function run() {
   const dryRun = process.argv.includes('--dry-run');
@@ -115,7 +140,15 @@ function run() {
   const publishedToday = state.history.filter(h => h.date === date).length;
   const target = L.targetCount(date);
   const remaining = Math.max(0, target - publishedToday);
-  const available = L.pickVideo().length;
+  renameAll(dryRun);
+  // A1（2026-11-08）：补货口径与发布端同口径——品牌确定 + 字幕闸门放行 + 文案质量过关
+  // 与 run_due 的选片条件一致，否则 available 会虚高，补货判断永远「库存充足」
+  const availableVideos = L.pickVideo().filter(v => {
+    if (!L.brandConfirmed(v) || !SG.confirmed(v)) return false;
+    const pv = v.brand_verified ? v : Object.assign({}, v, { brand: null, locationBrand: v.brand });
+    return L.copyClean(L.buildCopy(pv, state));
+  });
+  const available = availableVideos.length;
   const source = countSourceClips();
   const idle = isIdle();
   log(`day=${L.dayIndex(date)} target=${target} published=${publishedToday} remaining=${remaining} available=${available} source=${source} idle=${idle}`);
@@ -136,17 +169,17 @@ function run() {
 
   if (lowInventory) {
     log('low inventory, clipping all sources');
-    runEdit(['--all']);
+    runEdit(['--all', '--skip-existing']);
     return;
   }
   // 空闲但在发布窗口内：一次只剪一条，避免长时间占满 CPU 影响定时发布
   if (isOutsideWindow()) {
     log('idle outside window, clearing source backlog');
-    runEdit(['--all']);
+    runEdit(['--all', '--skip-existing']);
   } else {
     const clip = sourceClips()[0];
     log(`idle slot, clipping one: ${path.basename(clip)}`);
-    runEdit(['--clip', path.basename(clip)]);
+    runEdit(['--clip', path.basename(clip), '--skip-existing']);
   }
 }
 

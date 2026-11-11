@@ -14,7 +14,28 @@ const ROOT = L.ROOT;
 const CONFIG = L.CONFIG;
 const CACHE_PATH = CONFIG.paths.subtitle_audit_cache
   || path.join(CONFIG.paths.work_dir, 'subtitle_audit.json');
-const PYTHON = process.env.DANBAO_PYTHON || 'D:/@kaifa/openviking/.venv/Scripts/python.exe';
+// 审计用的 Python（A5，2026-11-08）：环境变量 → 通用媒体 venv → 剪辑用的 Python312 → PATH 里的 python，
+// 取第一个存在的；不再死绑另一个项目的 venv。
+// 候选链和"是否真能跑"由 lib 统一判断（A5）：环境变量 → 各大 venv → uv/常规安装 → PATH，
+// 不再把另一个项目的 venv 当唯一依靠，也不会挑到"文件在但一执行就退"的解释器。
+let PYTHON_CACHE = null;
+function python() {
+  if (!PYTHON_CACHE) {
+    // A（2026-11-08 宝哥要求）：项目自带 .venv 排第一，原来两个候选留作后备；
+    // 字幕审计只要 numpy，保持轻量 probe，取不到就自动落到下一个。
+    PYTHON_CACHE = L.resolvePython([
+      path.join(ROOT, '.venv/Scripts/python.exe'),
+      process.env.DANBAO_PYTHON,
+      'D:/@kaifa/tools/python-media/Scripts/python.exe',
+      'C:/Users/20200/AppData/Local/Programs/Python/Python312/python.exe'], 'import numpy');
+  }
+  return PYTHON_CACHE;
+}
+
+// 批量预算（A2，2026-11-08）：一轮最多审 N 条、总耗时不超过预算，剩下的留给下一轮。
+// 预算必须明显低于锁过期时间（默认 600s 对 1800s），否则上一轮还没跑完下一轮就判锁过期、重跑同一批。
+const MAX_AUDITS_PER_ROUND = Math.max(1, Number(CONFIG.publish.subtitle_max_audits ?? 3));
+const ROUND_BUDGET_MS = Math.max(60, Number(CONFIG.publish.subtitle_round_budget_sec ?? 600)) * 1000;
 const AUDIT_CLIP = path.join(ROOT, 'scripts/auto-edit/audit_clip.py');
 const DEFAULT_ENFORCE_SINCE = '2026-11-04T19:00:00+08:00';
 
@@ -47,20 +68,26 @@ function listTopVideos(dir) {
     .filter(p => { try { return Date.now() - fs.statSync(p).mtimeMs > stableMs; } catch { return false; } });
 }
 
+// B8（2026-11-08）：meta 一次建两个 Map（clipKey → 记录、成片名 → 记录），
+// 成片多时不再每条都全表 find，避免 O(n²)
 function workMetas() {
-  const out = [];
+  const map = new Map();
+  const byOutput = new Map();
   const root = CONFIG.paths.auto_edit_work;
-  if (!fs.existsSync(root)) return out;
+  map.byOutput = byOutput;
+  if (!fs.existsSync(root)) return map;
   for (const d of fs.readdirSync(root)) {
     const m = L.readJson(path.join(root, d, 'meta.json'), null);
-    if (m) out.push({ dir: d, m });
+    if (!m) continue;
+    const rec = { dir: d, m };
+    map.set(d, rec);
+    if (m.output) byOutput.set(path.basename(m.output), rec);
   }
-  return out;
+  return map;
 }
 
 function findMeta(metas, video) {
-  const base = path.basename(video);
-  return metas.find(x => x.m.output && path.basename(x.m.output) === base) || null;
+  return (metas.byOutput && metas.byOutput.get(path.basename(video))) || null;
 }
 
 function expectedFor(meta) {
@@ -96,7 +123,7 @@ function runAudit(video, meta, lines, band) {
   const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'subaudit-'));
   const linesFile = path.join(tmpDir, 'lines.json');
   fs.writeFileSync(linesFile, JSON.stringify({ lines }, null, 2));
-  const res = spawnSync(PYTHON, [
+  const res = spawnSync(python(), [
     AUDIT_CLIP,
     '--video', video,
     '--lines-file', linesFile,
@@ -126,7 +153,7 @@ function moveToReview(video, destDir, metas, brandIndex, clipKey) {
     dest = path.join(destDir, `${path.basename(base, ext)}_${Date.now()}${ext}`);
   }
   fs.renameSync(video, dest);
-  const hit = metas.find(x => x.dir === clipKey);
+  const hit = metas.get(clipKey) || null;
   if (hit) {
     hit.m.output = dest;
     L.writeJson(path.join(CONFIG.paths.auto_edit_work, hit.dir, 'meta.json'), hit.m);
@@ -136,6 +163,24 @@ function moveToReview(video, destDir, metas, brandIndex, clipKey) {
     brandIndex[clipKey].updated_at = new Date().toISOString();
   }
   return dest;
+}
+
+// A3（2026-11-08）：manual 超过 N 小时（默认 24）仍没有校对稿，就移进「字幕待修复」，
+// 不再原地无限等、也不再每小时提醒一次。
+function handleManualExpiry(video, base, stat, rec, ctx) {
+  if (rec.manual_moved_to) return;
+  const ttlH = Number(CONFIG.publish.subtitle_manual_ttl_hours ?? 24);
+  if (Date.now() - stat.mtimeMs < ttlH * 3600 * 1000) return;
+  if (ctx.dryRun) { ctx.result.pending_manual_moves = (ctx.result.pending_manual_moves || 0) + 1; return; }
+  try {
+    const to = moveToReview(video, ctx.destDir, ctx.metas, ctx.brandIndex, ctx.clipKey);
+    rec.manual_moved_to = to;
+    rec.reason = `超过 ${ttlH} 小时没有字幕校对稿，已移入字幕待修复`;
+    ctx.result.moved.push({ file: base, to, reason: rec.reason });
+    ctx.result.manual = ctx.result.manual.filter(m => m.file !== base);
+  } catch (e) {
+    rec.reason = 'manual timeout, move failed: ' + e.message;
+  }
 }
 
 // 扫描待发目录：补齐缓存 / 审计新片 / 把失败片移到「字幕待修复」
@@ -148,7 +193,8 @@ function auditInventory(opts = {}) {
   const cache = loadCache();
   const metas = workMetas();
   const brandIndex = L.readJson(CONFIG.paths.brand_index, {});
-  const result = { audited: 0, cached: 0, skipped: 0, manual: [], failed: [], unavailable: [], moved: [] };
+  const result = { audited: 0, cached: 0, skipped: 0, manual: [], failed: [], unavailable: [], moved: [], deferred: 0 };
+  const startedAt = Date.now();
 
   for (const video of listTopVideos(videoDir)) {
     const base = path.basename(video);
@@ -161,7 +207,10 @@ function auditInventory(opts = {}) {
     // unavailable 是临时故障，不信任缓存：下一轮重试，避免 OCR 恢复后成片被永久卡住
     if (prev && prev.status !== 'unavailable' && prev.mtime_ms === stat.mtimeMs && prev.size === stat.size) {
       result.cached++;
-      if (prev.status === 'manual') result.manual.push({ file: base, reason: prev.reason });
+      if (prev.status === 'manual') {
+        result.manual.push({ file: base, reason: prev.reason });
+        handleManualExpiry(video, base, stat, prev, { dryRun, destDir, metas, brandIndex, clipKey, result });
+      }
       if (prev.status === 'fail') result.failed.push({ file: base, reason: prev.reason, to: prev.to });
       if (prev.status === 'unavailable') result.unavailable.push({ file: base });
       if (prev.status === 'skipped' || prev.status === 'legacy_ok') result.skipped++;
@@ -196,6 +245,13 @@ function auditInventory(opts = {}) {
       });
       cache.clips[clipKey] = rec;
       result.manual.push({ file: base, reason: rec.reason });
+      handleManualExpiry(video, base, stat, rec, { dryRun, destDir, metas, brandIndex, clipKey, result });
+      continue;
+    }
+
+    // 预算用完就停：本轮不再 OCR，剩下的下一轮继续（未确认的成片本来就不进发布队列）
+    if (result.audited >= MAX_AUDITS_PER_ROUND || Date.now() - startedAt > ROUND_BUDGET_MS) {
+      result.deferred++;
       continue;
     }
 

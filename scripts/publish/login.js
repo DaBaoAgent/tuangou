@@ -2,8 +2,10 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const PROFILE_DIR = 'D:/@kaifa/tuangou/runtime/browser-profile';
-const SHOT_DIR = 'D:/@kaifa/tuangou/runtime/publish/shots';
+// 项目根按本文件位置推导（B1，2026-11-08）：换盘/换目录不用改这里
+const ROOT = path.resolve(__dirname, '..', '..');
+const PROFILE_DIR = path.join(ROOT, 'runtime/browser-profile');
+const SHOT_DIR = path.join(ROOT, 'runtime/publish/shots');
 fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function isLoggedIn(page) {

@@ -1,26 +1,42 @@
 {
   "paths": {
-    "video_dir": "D:/@kaifa/tuangou/素材库/已剪成片",
-    "published_dir": "D:/@kaifa/tuangou/素材库/已剪成片/已发",
-    "brand_review_dir": "D:/@kaifa/tuangou/素材库/已剪成片/品牌待确认",
-    "subtitle_review_dir": "D:/@kaifa/tuangou/素材库/已剪成片/字幕待修复",
-    "subtitle_audit_cache": "D:/@kaifa/tuangou/runtime/publish/subtitle_audit.json",
-    "work_dir": "D:/@kaifa/tuangou/runtime/publish",
-    "auto_edit_work": "D:/@kaifa/tuangou/runtime/auto-edit/work",
-    "brand_index": "D:/@kaifa/tuangou/runtime/auto-edit/brand_index.json",
-    "profile_dir": "D:/@kaifa/tuangou/runtime/browser-profile"
+    "video_dir": "素材库/已剪成片",
+    "published_dir": "素材库/已剪成片/已发",
+    "brand_review_dir": "素材库/已剪成片/品牌待确认",
+    "subtitle_review_dir": "素材库/已剪成片/字幕待修复",
+    "subtitle_audit_cache": "runtime/publish/subtitle_audit.json",
+    "work_dir": "runtime/publish",
+    "auto_edit_work": "runtime/auto-edit/work",
+    "brand_index": "runtime/auto-edit/brand_index.json",
+    "stats_dir": "runtime/publish/stats",
+    "profile_dir": "runtime/browser-profile",
+    "source_dir": "素材库/未剪素材",
+    "brands_file": "scripts/auto-edit/brands.json"
   },
   "schedule": {
-    "window": { "start": "09:00", "end": "22:30" },
+    "window": {
+      "start": "06:00",
+      "end": "19:00"
+    },
     "ramp": [
-      { "day": 1, "count": 2 },
-      { "day": 2, "count": 4 },
-      { "day": 3, "count": 6 },
-      { "day": 4, "count": 8 }
+      {
+        "day": 1,
+        "count": 2
+      },
+      {
+        "day": 2,
+        "count": 3
+      },
+      {
+        "day": 3,
+        "count": 4
+      }
     ],
-    "steady_min": 5,
-    "steady_max": 8,
-    "min_gap_minutes": 25,
+    "steady_min": 3,
+    "steady_max": 5,
+    "min_gap_minutes": 90,
+    "brand_cooldown_minutes": 240,
+    "brand_daily_cap": 2,
     "start_date": "2026-11-01"
   },
   "copy": {
@@ -32,15 +48,32 @@
   "publish": {
     "ai_declaration": true,
     "add_location": true,
-    "location_fallback": "skip",
+    "attach_product": true,
+    "use_hour_profile": true,
+    "queue_weights": {},
     "brand_min_confidence": 0.9,
     "subtitle_enforce_since": "2026-11-04T19:00:00+08:00",
-    "priority_brands": ["CoCo都可", "茶百道", "沪上阿姨"],
+    "priority_brands": [
+      "茉莉奶白",
+      "肯德基",
+      "霸王茶姬",
+      "苏掌柜藏书羊肉",
+      "CoCo都可",
+      "茶百道",
+      "沪上阿姨"
+    ],
     "verify_after_publish": true,
-    "max_retries": 2
+    "max_retries": 2,
+    "subtitle_max_audits": 3,
+    "subtitle_round_budget_sec": 600,
+    "subtitle_manual_ttl_hours": 24,
+    "lock_ttl_sec": 1800,
+    "prepare_lock_ttl_sec": 14400,
+    "upload_timeout_sec": 240,
+    "publish_result_timeout_sec": 240,
+    "chromium_path": ""
   },
   "notify": {
-    "wechat": true,
-    "wechat_push_script": "C:/Users/20200/.claude/channels/weixin/push.mjs"
+    "desktop": true
   }
 }

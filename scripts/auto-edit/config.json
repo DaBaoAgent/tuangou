@@ -1,18 +1,18 @@
 {
   "paths": {
-    "source_dir": "D:/@kaifa/tuangou/素材库/未剪素材",
-    "done_source_dir": "D:/@kaifa/tuangou/素材库/未剪素材/已剪",
-    "output_dir": "D:/@kaifa/tuangou/素材库/已剪成片",
+    "source_dir": "素材库/未剪素材",
+    "done_source_dir": "素材库/未剪素材/已剪",
+    "output_dir": "素材库/已剪成片",
     "bgm_dir": "D:/BaiduSyncdisk/19 最近待办/@爱优护工厂开发/抖音最火BGM",
-    "work_dir": "D:/@kaifa/tuangou/runtime/auto-edit/work",
-    "corrections_dir": "D:/@kaifa/tuangou/runtime/auto-edit/corrections",
-    "brands_file": "D:/@kaifa/tuangou/scripts/auto-edit/brands.json",
-    "brand_override_dir": "D:/@kaifa/tuangou/runtime/auto-edit/brand_overrides",
-    "product_override_dir": "D:/@kaifa/tuangou/runtime/auto-edit/product_overrides",
-    "brand_index_file": "D:/@kaifa/tuangou/runtime/auto-edit/brand_index.json",
-    "font_dir": "D:/@kaifa/tuangou/runtime/asr-models",
+    "work_dir": "runtime/auto-edit/work",
+    "corrections_dir": "runtime/auto-edit/corrections",
+    "brands_file": "scripts/auto-edit/brands.json",
+    "brand_override_dir": "runtime/auto-edit/brand_overrides",
+    "product_override_dir": "runtime/auto-edit/product_overrides",
+    "brand_index_file": "runtime/auto-edit/brand_index.json",
+    "font_dir": "runtime/asr-models",
     "font_file": "NotoSansSC-Bold.otf",
-    "fw_model_dir": "D:/@kaifa/tuangou/runtime/fw-models",
+    "fw_model_dir": "runtime/fw-models",
     "fw_model": "deepdml/faster-whisper-large-v3-turbo-ct2"
   },
   "video": {
@@ -40,6 +40,41 @@
     "outline_color": "000000",
     "skip_if_legacy": true
   },
+  "hook": {
+    "enabled": true,
+    "duration": 1.5,
+    "max_chars": 10,
+    "font_size": 142,
+    "fill": "FFD400",
+    "outline_color": "000000",
+    "outline": 2,
+    "shadow": 0,
+    "margin_top_ratio": 0.24,
+    "punch_in": 1.08,
+    "keywords": [
+      "买一送一",
+      "特惠",
+      "只要",
+      "仅需",
+      "半价",
+      "9.9",
+      "爆汁",
+      "酥",
+      "脆",
+      "糯",
+      "嫩",
+      "上头",
+      "划算",
+      "量大",
+      "满满",
+      "招牌",
+      "必点",
+      "新品",
+      "限时",
+      "通用"
+    ],
+    "max_start_seconds": 9
+  },
   "opening_fx": {
     "enabled": true,
     "duration": 0.6,
@@ -55,7 +90,7 @@
     "sfx_peak": 0.85
   },
   "audio": {
-    "voice_volume": 1.0,
+    "voice_volume": 1,
     "bgm_volume": 0.16,
     "fade_in": 0.3,
     "fade_out": 0.8,
@@ -77,7 +112,7 @@
     "retry_scale_width": 1440,
     "max_side_len": 2048,
     "min_ocr_score": 0.5,
-    "min_confidence": 0.8,
+    "min_confidence": 0.9,
     "fuzzy_threshold": 0.8
   },
   "asr": {

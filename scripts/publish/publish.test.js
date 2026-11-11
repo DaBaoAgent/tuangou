@@ -2,15 +2,21 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const L = require('./lib');
 
-test('排期：第 1–4 天为 2/4/6/8，时间窗内且相邻间隔 ≥25 分钟', () => {
-  for (let d = 0; d < 4; d++) {
+test('排期：起步 2/3/4 条，之后随机 3–5 条/天，时间窗内且相邻间隔达标', () => {
+  // 2026-11-11 宝哥拍板：ramp 2/3/4，稳态每天随机 3–5 条
+  const gap = L.CONFIG.schedule.min_gap_minutes;
+  for (let d = 0; d < 8; d++) {
     const ds = L.todayStr(new Date(2026, 10, 1 + d));
     const count = L.targetCount(ds);
-    assert.equal(count, [2, 4, 6, 8][d]);
+    if (d < 3) assert.equal(count, [2, 3, 4][d]);
+    else assert.ok(count >= L.CONFIG.schedule.steady_min && count <= L.CONFIG.schedule.steady_max);
     const mins = L.buildTimes(ds, count).map(L.minutesOf);
     assert.equal(mins.length, count);
-    assert.ok(mins.every(m => m >= L.minutesOf('09:00') && m <= L.minutesOf('22:30')));
-    for (let i = 1; i < mins.length; i++) assert.ok(mins[i] - mins[i - 1] >= 25);
+    // 时间窗以 config 为准（2026-11-08）：窗口已是 06:00–19:00，这里不再写死 09:00–22:30
+    const winStart = L.minutesOf(L.CONFIG.schedule.window.start);
+    const winEnd = L.minutesOf(L.CONFIG.schedule.window.end);
+    assert.ok(mins.every(m => m >= winStart && m <= winEnd));
+    for (let i = 1; i < mins.length; i++) assert.ok(mins[i] - mins[i - 1] >= gap);
   }
 });
 
@@ -229,15 +235,47 @@ test('文案：鸡柳大人、临榆炸鸡腿、三合一同音错字不落地',
 });
 
 test('排期：压缩窗口放不下时宁可少发，也不重复同一分钟', () => {
-  // 只剩 20 分钟却要 5 条：25 分钟间隔下最多只能放 1 条
+  const gap = L.CONFIG.schedule.min_gap_minutes;
+  // 只剩 20 分钟却要 5 条：间隔不足下最多只能放 1 条
   const tight = L.buildTimes('2026-11-10', 5, L.minutesOf('22:10'), L.minutesOf('22:30'));
   const mins = tight.map(L.minutesOf);
   assert.equal(new Set(mins).size, mins.length, tight.join(','));
   assert.ok(mins.every(m => m >= L.minutesOf('22:10') && m <= L.minutesOf('22:30')));
   assert.equal(mins.length, 1);
 
-  // 120 分钟要 10 条：只能放 5 条，且相邻仍 ≥25 分钟
+  // 2 小时要 10 条：最多 floor(120/gap)+1 条，且相邻仍达标
+  const expected = Math.floor(120 / gap) + 1;
   const mid = L.buildTimes('2026-11-10', 10, L.minutesOf('10:00'), L.minutesOf('12:00')).map(L.minutesOf);
-  assert.equal(mid.length, 5);
-  for (let i = 1; i < mid.length; i++) assert.ok(mid[i] - mid[i - 1] >= 25);
+  assert.equal(mid.length, expected);
+  for (let i = 1; i < mid.length; i++) assert.ok(mid[i] - mid[i - 1] >= gap);
+});
+
+test('时段加权排期：可复现、落在窗口内、间隔达标，且明显偏向高权重时段', () => {
+  const buckets = [{ from: 6, to: 9 }, { from: 9, to: 12 }, { from: 12, to: 15 }, { from: 15, to: 19 }];
+  const weights = { '06-09': 0.2, '09-12': 1, '12-15': 0.2, '15-19': 0.2 };
+  const a = L.buildTimesProfiled('2026-11-10', 4, undefined, undefined, buckets, weights);
+  const b = L.buildTimesProfiled('2026-11-10', 4, undefined, undefined, buckets, weights);
+  assert.deepEqual(a, b);
+  const mins = a.map(L.minutesOf);
+  const ws = L.minutesOf('06:00'), we = L.minutesOf('19:00');
+  const gap = L.CONFIG.schedule.min_gap_minutes;
+  assert.ok(mins.every(m => m >= ws && m <= we), a.join(','));
+  for (let i = 1; i < mins.length; i++) assert.ok(mins[i] - mins[i - 1] >= gap, a.join(','));
+
+  // 多天累计：高权重时段明显偏高（均匀 3/13≈0.23；90 分钟间隔下 09-12 三小时最多放 2 条，
+  // 所以不可能达到权重本身的 62%，只要显著高于均匀分布即可）
+  let hi = 0, total = 0;
+  for (let d = 1; d <= 20; d++) {
+    const ds = `2026-12-${String(d).padStart(2, '0')}`;
+    for (const t of L.buildTimesProfiled(ds, 4, undefined, undefined, buckets, weights)) {
+      const m = L.minutesOf(t);
+      total++;
+      if (m >= L.minutesOf('09:00') && m < L.minutesOf('12:00')) hi++;
+    }
+  }
+  assert.ok(hi / total > 0.33, `09-12 占比 ${(hi / total).toFixed(2)}`);
+});
+
+test('时段加权排期：没有桶或权重时返回 null，交给原排期', () => {
+  assert.equal(L.buildTimesProfiled('2026-11-10', 2, undefined, undefined, [], {}), null);
 });

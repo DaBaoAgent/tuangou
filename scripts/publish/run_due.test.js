@@ -19,7 +19,9 @@ function todayStr() {
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tuangou-run-'));
   sandboxes.push(dir);
-  for (const f of ['lib.js', 'run_due.js', 'subtitle_gate.js']) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
+  for (const f of ['lib.js', 'run_due.js', 'subtitle_gate.js', 'analytics.js', 'queue_score.js', 'xlsx.js']) {
+    fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
+  }
   // 通知桩：真的被调用时留下 notified.txt，用来断言 dry-run 没发通知
   fs.writeFileSync(path.join(dir, 'notify.ps1'), [
     'param([string]$Title,[string]$Message)',
@@ -37,7 +39,6 @@ function sandbox() {
   cfg.schedule.window = { start: '00:00', end: '23:59' };
   // 这些用例专注品牌/发布状态，字幕闸门用「全部视为存量片」避免依赖 OCR
   cfg.publish.subtitle_enforce_since = '2099-01-01T00:00:00+08:00';
-  cfg.notify = { wechat: false };
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg, null, 2));
   fs.mkdirSync(path.join(dir, '成片'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'work'), { recursive: true });
@@ -301,3 +302,83 @@ test('pickVideo 排除 state.excluded_videos 与计划里待核实/审核不通�
   writePlan(sb, [{ video: '成片A.mp4', status: 'published' }]);
   assert.deepEqual(JSON.parse(run().trim()), ['成片A.mp4']);
 });
+
+test('锁被存活进程持有：下一轮直接跳过，绝不并发重跑（重复发布防线）', () => {
+  const sb = sandbox();
+  writeStub(sb);
+  addVideo(sb);
+  writePlan(sb, [{}]);
+  fs.writeFileSync(path.join(sb.dir, 'runtime/run.lock'), String(process.pid));
+  const out = runDue(sb, { mode: 'ok' });
+  assert.match(out, /lock busy, skip/);
+  assert.equal(fs.existsSync(path.join(sb.dir, 'stub_calls.txt')), false);
+  assert.equal(readPlan(sb).items[0].status, 'pending');
+});
+
+test('同品牌冷却：该品牌刚发过就跳过本轮，绝不为了填坑连发同品牌', () => {
+  const sb = sandbox();
+  writeStub(sb);
+  addVideo(sb);
+  writePlan(sb, [
+    { status: 'published', brand: '临榆炸鸡腿', video: '旧片.mp4', published_at: new Date(Date.now() - 30 * 60000).toISOString() },
+    {},
+  ]);
+  const out = runDue(sb, { mode: 'ok' });
+  assert.match(out, /brand rhythm cooldown/);
+  assert.equal(fs.existsSync(path.join(sb.dir, 'stub_calls.txt')), false);
+  const item = readPlan(sb).items[1];
+  assert.equal(item.status, 'pending');
+  assert.equal(item.reason, 'brand rhythm');
+  assert.match(fs.readFileSync(notifiedFile(sb), 'utf8'), /品牌冷却/);
+});
+
+test('每日上限：冷却已过但该品牌当天发满，仍然不再发', () => {
+  const sb = sandbox();
+  writeStub(sb);
+  addVideo(sb);
+  writePlan(sb, [
+    { status: 'published', brand: '临榆炸鸡腿', video: '旧1.mp4', published_at: new Date(Date.now() - 6 * 3600000).toISOString() },
+    { status: 'published', brand: '临榆炸鸡腿', video: '旧2.mp4', published_at: new Date(Date.now() - 5 * 3600000).toISOString() },
+    {},
+  ]);
+  const out = runDue(sb, { mode: 'ok' });
+  assert.match(out, /brand rhythm daily-cap/);
+  assert.equal(fs.existsSync(path.join(sb.dir, 'stub_calls.txt')), false);
+  assert.equal(readPlan(sb).items[2].reason, 'brand rhythm');
+});
+
+test('brandUsage 回看昨天的计划：跨午夜的冷却仍然生效', () => {
+  const sb = sandbox();
+  const script = `
+    const L = require('./lib');
+    const fs = require('fs'), path = require('path');
+    const today = L.todayStr();
+    const ys = L.todayStr(new Date(Date.now() - 86400000));
+    const p = path.join(L.CONFIG.paths.work_dir, 'plans', ys + '.json');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify({ date: ys, items: [
+      { status: 'published', brand: '跨天品牌', at: '23:00', published_at: new Date(Date.now() - 3 * 3600000).toISOString() },
+      { status: 'pending', brand: '未发品牌', at: '23:30' },
+    ] }));
+    process.stdout.write(JSON.stringify(L.brandUsage(today)));
+  `;
+  const out = execFileSync(process.execPath, ['-e', script], { cwd: sb.dir, encoding: 'utf8' });
+  const u = JSON.parse(out);
+  assert.ok(u['跨天品牌'] && u['跨天品牌'].lastMs > 0);
+  assert.equal(u['跨天品牌'].todayCount, 0);
+  assert.equal(u['未发品牌'], undefined);
+});
+
+test('state.history 里的成片不会再被选中（防重复发布）', () => {
+  const sb = sandbox();
+  addVideo(sb);
+  fs.writeFileSync(stateFile(sb), JSON.stringify({
+    paused: false, paused_reason: null, used_title_suffix: [], excluded_videos: [],
+    history: [{ date: todayStr(), file: '成片A.mp4', at: new Date().toISOString() }],
+  }));
+  const out = execFileSync(process.execPath,
+    ['-e', "const L=require('./lib'); console.log(JSON.stringify(L.pickVideo().map(v=>v.file)))"],
+    { cwd: sb.dir, encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(out.trim()), []);
+});
+

@@ -4,8 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const L = require('./lib');
+const { pickBestProduct, promoTitle } = require('./product_pick');
 
-const CHROMIUM = 'C:/Users/20200/AppData/Local/ms-playwright/chromium-1248/chrome-win64/chrome.exe';
+// Chromium（A4，2026-11-08）：环境变量 → config.publish.chromium_path → 扫 ms-playwright 最高版本；
+// 都没有就留空，走 playwright 自带的那一份，升级/换机不会整条断。
+const CHROMIUM = L.chromiumPath();
 const POST_URL = 'https://creator.douyin.com/creator-micro/content/post/video?enter_from=publish_page';
 const MANAGE_URL = 'https://creator.douyin.com/creator-micro/content/manage';
 
@@ -35,8 +38,13 @@ async function isVisible(page, selector) {
   return page.locator(selector).first().isVisible().catch(() => false);
 }
 
+// 上传等待（B6，2026-11-08）：默认 240 秒，从 config 读，长视频不再 90 秒就判超时白传一次
+const UPLOAD_TIMEOUT_MS = Math.max(30, Number(L.CONFIG.publish.upload_timeout_sec ?? 240)) * 1000;
+const PUBLISH_RESULT_TIMEOUT_MS = Math.max(30, Number(L.CONFIG.publish.publish_result_timeout_sec ?? 240)) * 1000;
+
 async function waitUploadComplete(page) {
-  for (let i = 0; i < 60; i++) {
+  const tries = Math.max(1, Math.ceil(UPLOAD_TIMEOUT_MS / 1500));
+  for (let i = 0; i < tries; i++) {
     await page.waitForTimeout(1500);
     const body = await page.locator('body').innerText();
     if (body.includes('重新上传')) return true;
@@ -133,6 +141,99 @@ async function setLocation(page, brand) {
   const selectedText = pick.text.split('\n')[0];
   const body = await page.locator('body').innerText();
   return { ok: body.includes(selectedText), selected: selectedText, candidates: options.length };
+}
+
+// 挂团购商品（2026-11-10）：位置 → 团购 → 请选择团购商品 → 输品牌过滤 → 选最合适的一条。
+// 商品挂上后位置自动跟商品走，不再单独挂门店；挂不上返回 ok:false，由调用方决定是否退回只挂门店。
+async function setProduct(page, { brand, product } = {}) {
+  if (!brand) return { ok: false, reason: 'no-brand' };
+  // 标签行里的「位置」是类型下拉入口；直接点「输入地理位置」只会打开 POI 搜索面板，
+  // 那里没有团购入口（2026-11-10 实跑发现，改成点标签 chip）
+  const chip = page.getByText('位置', { exact: true }).first();
+  if (!(await chip.count())) return { ok: false, reason: 'no-location-chip' };
+  await chip.click({ force: true });
+  await page.waitForTimeout(1500);
+
+  const tg = page.getByText('团购', { exact: true }).first();
+  if (!(await tg.count())) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-tuangou-option' };
+  }
+  await tg.click({ force: true });
+  await page.waitForTimeout(2000);
+
+  const picker = page.getByText('请选择团购商品', { exact: true }).first();
+  if (!(await picker.count())) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-product-picker' };
+  }
+  await picker.click({ force: true });
+  await page.waitForTimeout(3000);
+
+  const input = page.locator('.semi-select-open input').first();
+  if (!(await input.count())) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-search-input' };
+  }
+  await input.click().catch(() => {});
+  await page.keyboard.press('Control+A').catch(() => {});
+  await page.keyboard.type(brand, { delay: 60 });
+  await page.waitForTimeout(3200);
+
+  const options = await page.evaluate(() => [...document.querySelectorAll('.semi-select-option,[role=option]')]
+    .map((el, i) => ({ i, text: (el.innerText || '').trim() }))
+    .filter(o => o.text));
+  if (!options.length) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-product-options' };
+  }
+
+  const chosen = pickBestProduct(options, brand, { product });
+  if (!chosen) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-matching-product', candidates: options.length };
+  }
+
+  await page.locator('.semi-select-option,[role=option]').nth(chosen.i).click({ force: true });
+  await page.waitForTimeout(2500);
+
+  // 点选商品只打开抽屉，还要填「推广标题」+ 点「添加」才算挂上（2026-11-10 实跑）
+  const sheet = page.locator('.semi-sidesheet').first();
+  const base = { selected: chosen.title, store: chosen.store, price: chosen.price,
+    commission_rate: chosen.commission_rate, score: chosen.score, candidates: options.length };
+  if (!(await sheet.count())) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-product-sheet', ...base };
+  }
+  const titleInput = sheet.locator('input.semi-input').first();
+  // 推广标题用商品名+规格，不再只写品牌名（2026-11-10 新规：锚点标题应贴近商品本身）
+  const promo = promoTitle(chosen, brand);
+  if (!(await titleInput.count())) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-promo-title-input', ...base };
+  }
+  await titleInput.fill(promo);
+  const sameBrand = sheet.getByText('仅推荐同品牌商品', { exact: true }).first();
+  if (await sameBrand.count()) await sameBrand.click({ force: true }).catch(() => {});
+  await page.waitForTimeout(500);
+
+  const add = sheet.getByText('添加', { exact: true }).first();
+  if (!(await add.count())) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { ok: false, reason: 'no-add-button', ...base };
+  }
+  await add.click();
+  await page.waitForTimeout(3000);
+
+  const pickerGone = (await page.getByText('请选择团购商品', { exact: true }).count()) === 0;
+  // 真正的挂载标志：选择区的「请选择团购商品」消失，且没有可见的抽屉遮罩挡住后续操作
+  const maskVisible = await page.locator('.semi-sidesheet-mask').evaluateAll(els => els.some(e => {
+    const r = e.getBoundingClientRect();
+    const cs = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden';
+  })).catch(() => false);
+  const applied = pickerGone && !maskVisible;
+  return { ok: applied, reason: applied ? null : 'product-not-applied', promo_title: promo, ...base };
 }
 
 // 控件的文字标签：优先 label，其次 aria/title，再退回相邻兄弟；
@@ -256,14 +357,15 @@ async function verifyBeforePublish(page, settings = {}) {
 
 async function publishOne(videoInfo, copy, opts = {}) {
   const dryRun = !!opts.dryRun;
-  const browser = await chromium.launchPersistentContext(L.CONFIG.paths.profile_dir, {
-    executablePath: CHROMIUM,
+  const launchOpts = {
     headless: opts.headless !== false,
     viewport: { width: 1440, height: 960 },
     locale: 'zh-CN',
     timezoneId: 'Asia/Shanghai',
     acceptDownloads: false,
-  });
+  };
+  if (CHROMIUM) launchOpts.executablePath = CHROMIUM;
+  const browser = await chromium.launchPersistentContext(L.CONFIG.paths.profile_dir, launchOpts);
   const page = browser.pages()[0] || await browser.newPage();
   const shots = L.ensureDir(path.join(L.CONFIG.paths.work_dir, 'shots'));
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
@@ -293,9 +395,15 @@ async function publishOne(videoInfo, copy, opts = {}) {
     const cover = await setCovers(page);
     log('cover ' + JSON.stringify(cover));
 
+    // 先挂团购商品（能带成交），挂不上再退回只挂门店（带曝光）
+    let prod = { ok: false, reason: 'skipped' };
     let loc = { ok: false, reason: 'skipped' };
     const locationBrand = videoInfo.locationBrand || videoInfo.brand;
-    if (L.CONFIG.publish.add_location && locationBrand) {
+    if (L.CONFIG.publish.attach_product && locationBrand) {
+      prod = await setProduct(page, { brand: locationBrand, product: videoInfo.product });
+      log('product ' + JSON.stringify(prod));
+    }
+    if (L.CONFIG.publish.add_location && locationBrand && !prod.ok) {
       loc = await setLocation(page, locationBrand);
       log('location ' + JSON.stringify(loc));
     }
@@ -317,15 +425,15 @@ async function publishOne(videoInfo, copy, opts = {}) {
     await page.screenshot({ path: path.join(shots, `${stamp}_before_publish.png`), fullPage: false });
 
     if (dryRun) {
-      return { ok: true, dryRun: true, check, copyInfo, cover, loc, declaration: decl, settings };
+      return { ok: true, dryRun: true, check, copyInfo, cover, loc, product: prod, declaration: decl, settings };
     }
     if (!check.aiDeclaration) return { ok: false, reason: 'ai-declaration-missing' };
     if (!check.notSimultaneous) return { ok: false, reason: 'not-simultaneous-missing' };
     if (check.coverMissing) return { ok: false, reason: 'cover-missing' };
-    // 品牌已确认时必须挂上位置门店（宝哥 2026-11-02）；门店没挂上就不发，留队重试/通知
+    // 品牌已确认时必须有定位：团购商品或门店标签，任一个挂上都算（宝哥 2026-11-02/11-10）
     // add_location 关闭时不做此拦截（兼容手动关闭位置标签的配置）
-    if (L.CONFIG.publish.add_location && locationBrand && !loc.ok && !check.hasLocation) {
-      return { ok: false, reason: 'location-missing', loc, check, copyInfo, cover, declaration: decl, settings };
+    if (L.CONFIG.publish.add_location && locationBrand && !prod.ok && !loc.ok && !check.hasLocation) {
+      return { ok: false, reason: 'location-missing', loc, product: prod, check, copyInfo, cover, declaration: decl, settings };
     }
 
     // 点击底部「发布」。标志位先置位：点击一旦发起，后续任何异常都可能意味着已发布
@@ -335,7 +443,8 @@ async function publishOne(videoInfo, copy, opts = {}) {
 
     // 等待发布结果
     let success = false;
-    for (let i = 0; i < 60; i++) {
+    const resultTries = Math.max(1, Math.ceil(PUBLISH_RESULT_TIMEOUT_MS / 2000));
+    for (let i = 0; i < resultTries; i++) {
       await page.waitForTimeout(2000);
       const url = page.url();
       const body = await page.locator('body').innerText().catch(() => '');
@@ -361,9 +470,9 @@ async function publishOne(videoInfo, copy, opts = {}) {
     await page.screenshot({ path: path.join(shots, `${stamp}_manage.png`) });
     log(`verified found=${idx >= 0} status=${status} id=${idMatches[0] || 'none'}`);
     // 已经跳转并出现「发布成功」，列表暂时看不到不能当失败重试，否则会重复发布
-    if (idx < 0) return { ok: true, workId: idMatches[0] || null, status: 'unknown', check, loc, verify_note: 'title-not-found' };
-    if (status === '审核不通过') return { ok: false, reason: 'verify-failed', status, loc };
-    return { ok: true, workId: idMatches[0] || null, status: status || 'unknown', check, loc };
+    if (idx < 0) return { ok: true, workId: idMatches[0] || null, status: 'unknown', check, loc, product: prod, verify_note: 'title-not-found' };
+    if (status === '审核不通过') return { ok: false, reason: 'verify-failed', status, loc, product: prod };
+    return { ok: true, workId: idMatches[0] || null, status: status || 'unknown', check, loc, product: prod };
   } catch (e) {
     log('ERROR ' + e.message);
     await page.screenshot({ path: path.join(shots, `${stamp}_error.png`) }).catch(() => {});
@@ -374,7 +483,7 @@ async function publishOne(videoInfo, copy, opts = {}) {
   }
 }
 
-module.exports = { publishOne, ensureNotSimultaneous, verifyBeforePublish };
+module.exports = { publishOne, ensureNotSimultaneous, verifyBeforePublish, clickByTextIn, waitUploadComplete, fillCopy, setCovers, setLocation, setProduct, setDeclaration, liveSyncChecked };
 
 if (require.main === module) {
   const args = process.argv.slice(2);

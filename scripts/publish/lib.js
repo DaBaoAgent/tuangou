@@ -2,10 +2,26 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const A = require('./analytics');
+const QS = require('./queue_score');
 
-const ROOT = 'D:/@kaifa/tuangou';
+// B1（2026-11-08）：项目根按本文件位置推导，换盘/换目录都不用改这里
+function resolveRoot() {
+  const env = String(process.env.TUANGOU_ROOT || '').trim();
+  if (env) return env.replace(/\\/g, '/');
+  const rel = path.resolve(__dirname, '..', '..').replace(/\\/g, '/');
+  try { if (fs.existsSync(path.join(rel, 'scripts/auto-edit/brands.json'))) return rel; } catch {}
+  // 位置推导失败（沙箱/临时拷贝）才回退历史固定路径
+  return 'D:/@kaifa/tuangou';
+}
+const ROOT = resolveRoot();
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-const BRANDS = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/auto-edit/brands.json'), 'utf8'));
+// B1（2026-11-08）：配置里的相对路径统一按 ROOT 解析，脚本在任意工作目录启动都指向同一份数据
+for (const [k, v] of Object.entries(CONFIG.paths || {})) {
+  if (typeof v === 'string' && v && !path.isAbsolute(v)) CONFIG.paths[k] = path.join(ROOT, v).replace(/\\/g, '/');
+}
+// B2（2026-11-08）：品牌库路径也走配置，不再硬编码
+const BRANDS = JSON.parse(fs.readFileSync(CONFIG.paths.brands_file || path.join(ROOT, 'scripts/auto-edit/brands.json'), 'utf8'));
 
 function ensureDir(p) { fs.mkdirSync(p, { recursive: true }); return p; }
 function readJson(p, fallback) {
@@ -18,27 +34,6 @@ function writeJson(p, obj) {
   fs.renameSync(tmp, p);
 }
 
-// 重要消息推送微信：直接调 iLink 出站脚本，不依赖 Claude Code 会话；失败只返回错误，不抛出
-const WECHAT_PUSH = (CONFIG.notify && CONFIG.notify.wechat_push_script)
-  || 'C:/Users/20200/.claude/channels/weixin/push.mjs';
-function pushWeChat(text) {
-  if (CONFIG.notify && CONFIG.notify.wechat === false) return { ok: false, error: 'disabled' };
-  try {
-    if (!fs.existsSync(WECHAT_PUSH)) return { ok: false, error: 'push.mjs not found' };
-    const env = { ...process.env };
-    for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[k];
-    const hosts = new Set(String(env.NO_PROXY || env.no_proxy || '').split(',').map(s => s.trim()).filter(Boolean));
-    ['weixin.qq.com', 'ilinkai.weixin.qq.com', '127.0.0.1', 'localhost'].forEach(h => hosts.add(h));
-    env.NO_PROXY = env.no_proxy = [...hosts].join(',');
-    const out = execFileSync(process.execPath, [WECHAT_PUSH, '--text', text], { timeout: 20000, encoding: 'utf8', env });
-    const last = String(out).trim().split(/\r?\n/).pop();
-    const res = JSON.parse(last);
-    return res.ok ? { ok: true } : { ok: false, error: res.error || 'unknown' };
-  } catch (e) {
-    const err = (e.stderr && String(e.stderr).trim()) || e.message || String(e);
-    return { ok: false, error: err.slice(0, 300) };
-  }
-}
 
 function todayStr(d = new Date()) {
   const y = d.getFullYear();
@@ -69,6 +64,38 @@ function saveState(s) { writeJson(statePath(), s); }
 function planPath(dateStr) { return path.join(CONFIG.paths.work_dir, 'plans', `${dateStr}.json`); }
 function loadPlan(dateStr) { return readJson(planPath(dateStr), null); }
 function savePlan(dateStr, plan) { writeJson(planPath(dateStr), plan); }
+
+// 2026-11-11：同品牌冷却/每日上限的数据源。只有计划条目带 brand（state.history 不带），
+// 所以回看最近几天计划里状态为 published 的条目；缺 published_at 的旧条目用「计划日期 + at」近似。
+function publishedAtMs(item, dateStr) {
+  const explicit = item.published_at || item.publishedAt;
+  const t = explicit ? Date.parse(explicit) : NaN;
+  if (Number.isFinite(t)) return t;
+  const at = item.at || '00:00';
+  const guess = Date.parse(`${dateStr}T${at}:00`);
+  return Number.isFinite(guess) ? guess : 0;
+}
+
+function brandUsage(dateStr, opts = {}) {
+  const days = Math.max(1, Number(opts.days ?? 2));
+  const today = dateStr || todayStr();
+  const base = new Date(`${today}T00:00:00`);
+  const usage = {};
+  if (Number.isNaN(base.getTime())) return usage;
+  for (let d = days - 1; d >= 0; d--) {
+    const ds = todayStr(new Date(base.getTime() - d * 86400000));
+    const plan = loadPlan(ds);
+    if (!plan || !Array.isArray(plan.items)) continue;
+    for (const it of plan.items) {
+      if (it.status !== 'published' || !it.brand) continue;
+      const u = usage[it.brand] || (usage[it.brand] = { brand: it.brand, lastAt: null, lastMs: 0, todayCount: 0 });
+      const ms = publishedAtMs(it, ds);
+      if (ms > u.lastMs) { u.lastMs = ms; u.lastAt = new Date(ms).toISOString(); }
+      if (ds === today) u.todayCount++;
+    }
+  }
+  return usage;
+}
 
 // 稳定随机：同一天同一条计划可复现
 function seededRandom(seedStr) {
@@ -115,6 +142,54 @@ function buildTimes(dateStr, count, startMin, endMin) {
   return Array.from({ length: n }, (_, i) => hhmmOf(start + i * step));
 }
 
+// 2026-11-10：按账号历史时段表现给发布时刻加权；样本不足（<30 条）或画像缺失时用原随机排期
+function buildTimesProfiled(dateStr, count, startMin, endMin, buckets, weights) {
+  const start = startMin ?? minutesOf(CONFIG.schedule.window.start);
+  const end = endMin ?? minutesOf(CONFIG.schedule.window.end);
+  const gap = CONFIG.schedule.min_gap_minutes;
+  const rnd = seededRandom(`times:${dateStr}:profile`);
+  if (!buckets || !buckets.length) return null;
+  const ranges = buckets
+    .map(b => {
+      const key = `${String(b.from).padStart(2, '0')}-${String(b.to).padStart(2, '0')}`;
+      const lo = Math.max(start, b.from * 60);
+      const hi = Math.min(end, b.to * 60 - 1);
+      return hi >= lo ? { lo, hi, weight: Number(weights[key]) > 0 ? Number(weights[key]) : 0.4 } : null;
+    })
+    .filter(Boolean);
+  if (!ranges.length) return null;
+  const total = ranges.reduce((s, r) => s + r.weight, 0);
+  for (let attempt = 0; attempt < 800; attempt++) {
+    const times = [];
+    let ok = true;
+    for (let i = 0; i < count; i++) {
+      // 2026-11-11：只在「这一条」撞间隔时重抽，不再整轮作废。
+      // 整轮作废会把偏好时段的权重一起洗掉（降量后尤其明显）。
+      let t = null;
+      for (let k = 0; k < 60; k++) {
+        let pick = rnd() * total;
+        const r = ranges.find(x => (pick -= x.weight) <= 0) || ranges[ranges.length - 1];
+        const cand = r.lo + Math.floor(rnd() * (r.hi - r.lo + 1));
+        if (!times.some(x => Math.abs(x - cand) < gap)) { t = cand; break; }
+      }
+      if (t === null) { ok = false; break; }
+      times.push(t);
+    }
+    if (ok) return times.sort((a, b) => a - b).map(hhmmOf);
+  }
+  return null;
+}
+
+function planTimes(dateStr, count, startMin, endMin) {
+  const base = buildTimes(dateStr, count, startMin, endMin);
+  if (!CONFIG.publish.use_hour_profile) return base;
+  const analytics = A.loadAnalytics(A.statsPaths(ROOT, CONFIG));
+  if (!analytics || analytics.count < 30) return base;
+  const weights = QS.hourWeights(analytics);
+  if (!weights) return base;
+  return buildTimesProfiled(dateStr, count, startMin, endMin, analytics.buckets, weights) || base;
+}
+
 function ensurePlan(dateStr, opts = {}) {
   let plan = loadPlan(dateStr);
   if (plan) return plan;
@@ -122,7 +197,7 @@ function ensurePlan(dateStr, opts = {}) {
   const doneToday = state.history.filter(h => h.date === dateStr).length;
   const count = targetCount(dateStr);
   const remaining = Math.max(0, count - doneToday);
-  let times = buildTimes(dateStr, remaining);
+  let times = planTimes(dateStr, remaining);
   // 当天首次建计划时，如果随机时间已过，就压缩到「现在+5分钟 ~ 当天窗口结束」之间
   if (dateStr === todayStr() && remaining > 0) {
     const now = new Date();
@@ -131,7 +206,7 @@ function ensurePlan(dateStr, opts = {}) {
     const windowEnd = minutesOf(CONFIG.schedule.window.end);
     const startMin = Math.max(windowStart, nowMin + 5);
     if (times.some(t => minutesOf(t) <= nowMin)) {
-      times = startMin >= windowEnd - 5 ? [] : buildTimes(dateStr, remaining, startMin, windowEnd);
+      times = startMin >= windowEnd - 5 ? [] : planTimes(dateStr, remaining, startMin, windowEnd);
     }
   }
   const items = [];
@@ -187,15 +262,20 @@ function inspectVideos() {
       }
     }
   }
+  // B8（2026-11-08）：成片名 → meta 建一次索引，不再每条成片全量扫 work 目录
+  const metaByBase = new Map();
+  for (const x of metas) { const k = x.m.output ? path.basename(x.m.output) : null; if (k && !metaByBase.has(k)) metaByBase.set(k, x); }
   const brandIndex = readJson(CONFIG.paths.brand_index, {});
   for (const video of listVideos()) {
     const base = path.basename(video);
-    const hit = metas.find(x => x.m.output && path.basename(x.m.output) === base);
+    const hit = metaByBase.get(base);
     const clipKey = hit ? hit.dir : base.replace(/\.[^.]+$/, '');
     const meta = hit ? hit.m : {};
     const fallbackBrand = brandIndex[clipKey]?.brand || null;
     const metaBrand = typeof meta.brand === 'string' ? meta.brand : null;
-    const brand = (meta.brand && meta.brand.brand) || metaBrand || fallbackBrand || null;
+    // B（2026-11-08 宝哥要求）：缺 meta 的成片，品牌按文件名确定性匹配，匹配不到才算没有
+    const fileBrand = hit ? null : brandFromFilename(base);
+    const brand = (meta.brand && meta.brand.brand) || metaBrand || fallbackBrand || (fileBrand && fileBrand.name) || null;
     let lines = (meta.lines || []).map(l => l.text).filter(Boolean);
     // 跳过字幕的素材 meta.lines 为空，退回 ASR 口播：按词间停顿切成自然短句
     if (!lines.length && hit) {
@@ -210,16 +290,36 @@ function inspectVideos() {
       brand_verified: !!BRANDS.brands.find(b => b.name === brand && b.verified),
       brand_needs_review: !!meta.brand?.needs_review,
       // 品牌置信度：OCR 仿品牌字会误读，低于阈值一律不自动发布（宝哥 2026-11-02）
-      brand_confidence: Number(meta.brand?.confidence ?? brandIndex[clipKey]?.confidence) || 0,
-      brand_source: meta.brand?.source || brandIndex[clipKey]?.source || null,
+      brand_confidence: Number(meta.brand?.confidence ?? brandIndex[clipKey]?.confidence) || (fileBrand ? 1 : 0),
+      brand_source: meta.brand?.source || brandIndex[clipKey]?.source || (fileBrand ? 'filename' : null),
       // meta 里的商品/品类由画面字幕人工确认过，比 ASR 更可信，优先用于标题兜底
       product: meta.brand?.product || null,
       category: BRANDS.brands.find(b => b.name === brand)?.category || meta.brand?.category || null,
       lines,
+      copy_override: meta.copy_override || null,
       has_meta: !!hit,
+      // 缺 meta、但文件名能定品牌：按 legacy_no_meta 入队（不伪造 meta.json，只写审计记录）
+      legacy_no_meta: !hit && !!fileBrand,
     });
   }
   return out;
+}
+
+// B（2026-11-08 宝哥要求）：缺 meta 的成片不再直接丢弃——品牌先按文件名里的品牌名/别名做
+// 确定性匹配（取命中最长的那个别名，短别名不会盖住长品牌名）；匹配不到再看已有的品牌记录。
+// 只做字符串包含，不猜；都匹配不到就留空，交给品牌闸门挡住。
+function brandFromFilename(base) {
+  const name = String(base || '').replace(/\.[^.]+$/, '').toUpperCase();
+  if (!name) return null;
+  let hit = null;
+  for (const b of BRANDS.brands || []) {
+    for (const alias of [b.name, ...(b.aliases || [])]) {
+      const t = String(alias || '').toUpperCase();
+      if (!t || !name.includes(t)) continue;
+      if (!hit || t.length > hit.len) hit = { brand: b, len: t.length };
+    }
+  }
+  return hit ? hit.brand : null;
 }
 
 // 品牌闸门：无品牌、待复核、或置信度低于阈值都算「不能确认」
@@ -244,20 +344,24 @@ function quarantineUnconfirmed(opts = {}) {
       if (m) metas.push({ dir: d, m });
     }
   }
+  // B8（2026-11-08）：品牌待确认扫描同样用索引，避免逐个成片全量比 meta  
+  const metaByBase = new Map();
+  for (const x of metas) { const k = x.m.output ? path.basename(x.m.output) : null; if (k && !metaByBase.has(k)) metaByBase.set(k, x); }
   const brandIndex = readJson(brandIndexPath, {});
   const moved = [];
   const kept = [];
 
   for (const video of listVideos(videoDir)) {
     const base = path.basename(video);
-    const hit = metas.find(x => x.m.output && path.basename(x.m.output) === base);
+    const hit = metaByBase.get(base);
     const clipKey = hit ? hit.dir : base.replace(/\.[^.]+$/, '');
     const meta = hit ? hit.m : {};
     const idx = brandIndex[clipKey] || {};
+    const fileBrand = hit ? null : brandFromFilename(base);
     const brand = (meta.brand && meta.brand.brand)
-      || (typeof meta.brand === 'string' ? meta.brand : null) || idx.brand || null;
+      || (typeof meta.brand === 'string' ? meta.brand : null) || idx.brand || (fileBrand && fileBrand.name) || null;
     const needsReview = hit ? !!meta.brand?.needs_review : !!idx.needs_review;
-    const confidence = Number(meta.brand?.confidence ?? idx.confidence) || 0;
+    const confidence = Number(meta.brand?.confidence ?? idx.confidence) || (fileBrand ? 1 : 0);
     const verified = !!BRANDS.brands.find(b => b.name === brand && b.verified);
     const confirmed = !!brand && !needsReview
       && (verified || confidence >= (CONFIG.publish.brand_min_confidence ?? 0.9));
@@ -303,7 +407,10 @@ function pickVideo() {
   // 即使 _unverified_ 改名失败，也按计划状态把它们挡在队列外
   const planDir = path.join(CONFIG.paths.work_dir, 'plans');
   if (fs.existsSync(planDir)) {
+    // B8（2026-11-08）：只回看最近 7 天的计划，历史计划不再每轮全量解析
+    const planSinceMs = Date.now() - 7 * 24 * 3600 * 1000;
     for (const f of fs.readdirSync(planDir).filter(x => x.endsWith('.json'))) {
+      try { if (fs.statSync(path.join(planDir, f)).mtimeMs < planSinceMs) continue; } catch { continue; }
       const p = readJson(path.join(planDir, f), null);
       if (!p || !Array.isArray(p.items)) continue;
       for (const it of p.items) {
@@ -312,7 +419,9 @@ function pickVideo() {
     }
   }
   // 只发自动剪辑写全 meta 的成片：渲染中断的半成品没有 meta，避免误发；手动成片用 publish_one.js 单独发
-  return vids.filter(v => !published.has(v.file) && !excluded.has(v.file) && v.has_meta);
+  // B（2026-11-08 宝哥要求）：缺 meta 的成片，只要文件名能确定品牌就照样进队列；
+  // 品牌仍由 brandConfirmed 把关，字幕闸门、去重、排除表逻辑一概不动
+  return vids.filter(v => !published.has(v.file) && !excluded.has(v.file) && (v.has_meta || v.legacy_no_meta));
 }
 
 const FILLER = /^(姐妹们|宝子们|家人们|朋友们|兄弟们|哈喽|大家好|我跟你们说|我跟你说|听我说)[，,！!。.]*/;
@@ -665,14 +774,114 @@ function buildCopy(videoInfo, state) {
     if (!uniq.includes(FILLER_TAGS[i])) uniq.push(FILLER_TAGS[i]);
   }
 
+  // copy_override（2026-11-08 宝哥要求）：meta 里人工定稿的文案优先；只有 meta 带 copy_override 才生效。
+  // 覆盖后仍要过 copyClean，不通过就忽略覆盖、回退自动生成，并在日志里记一条（绝不把低质文案发出去）。
+  const ov = videoInfo.copy_override;
+  if (ov && typeof ov === 'object') {
+    const c2 = {
+      title: (typeof ov.title === 'string' && ov.title.trim()) ? ov.title.trim() : title,
+      desc: (typeof ov.desc === 'string' && ov.desc.trim()) ? ov.desc.trim() : desc,
+      topics: (Array.isArray(ov.topics) && ov.topics.length)
+        ? ov.topics.map(t => String(t).trim()).filter(Boolean)
+        : uniq,
+    };
+    if (copyClean(c2)) {
+      return { title: c2.title, desc: c2.desc, topics: c2.topics, product: product || brand || null, hook, category };
+    }
+    try {
+      const ld = path.isAbsolute(CONFIG.paths.work_dir) ? path.join(CONFIG.paths.work_dir, 'logs') : path.join(ROOT, CONFIG.paths.work_dir, 'logs');
+      ensureDir(ld);
+      fs.appendFileSync(path.join(ld, `${todayStr()}.log`),
+        `[${new Date().toISOString()}] COPY_OVERRIDE_REJECTED ${videoInfo.file} | ${c2.title}\n`);
+    } catch (e) { /* 留痕失败不挡出片 */ }
+  }
+
   return { title, desc, topics: uniq, product: product || brand || null, hook, category };
+}
+
+// A4（2026-11-08）：Chromium 路径：环境变量 → config → 扫 ms-playwright 最高版本 → 兜底用 playwright 自带
+function chromiumPath() {
+  const pick = p => { try { return p && fs.existsSync(p) ? String(p).replace(/\\/g, '/') : null; } catch { return null; } };
+  const fromEnv = pick(String(process.env.TUANGOU_CHROMIUM || process.env.PLAYWRIGHT_CHROMIUM_PATH || '').trim());
+  if (fromEnv) return fromEnv;
+  const fromCfg = pick(CONFIG.publish.chromium_path);
+  if (fromCfg) return fromCfg;
+  const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'ms-playwright') : null,
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData/Local/ms-playwright') : null].filter(Boolean);
+  const found = [];
+  for (const root of roots) {
+    let dirs = [];
+    try { dirs = fs.readdirSync(root).filter(d => /^chromium-\d+/.test(d)); } catch { continue; }
+    for (const d of dirs) {
+      const ver = Number(d.replace(/^chromium-/, '')) || 0;
+      for (const rel of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe', 'chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+        const p = pick(path.join(root, d, rel));
+        if (p) found.push({ ver, p });
+      }
+    }
+  }
+  if (!found.length) return null; // 兜底：playwright 自带的 chromium
+  found.sort((a, b) => b.ver - a.ver);
+  return found[0].p;
+}
+
+// A5（2026-11-08）：Python 候选链（环境变量 → 传入候选 → PATH），能用才算数，不再单点依赖某个 venv
+function resolvePython(candidates = [], probe = 'import sys') {
+  const list = [process.env.TUANGOU_PYTHON, process.env.DANBAO_PYTHON, ...(candidates || []), 'python'].filter(Boolean);
+  for (const exe of list) {
+    const s = String(exe);
+    if (/[\\/]/.test(s) && !fs.existsSync(s)) continue;
+    try { execFileSync(s, ['-c', probe], { timeout: 20000, stdio: 'ignore' }); return s; } catch {}
+  }
+  return null;
+}
+
+// A7（2026-11-08）：判断锁里的 pid 是否还活着
+function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!n || n <= 0) return false;
+  try { process.kill(n, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+// B4（2026-11-08）：成片改名收进 lib，prepare 与 run_due 共用一份，不再各抄一遍
+function renameAll(dryRun, logFn) {
+  const say = typeof logFn === 'function' ? logFn : () => {};
+  const renamer = path.join(ROOT, 'scripts/auto-edit/rename_final.js');
+  if (!fs.existsSync(renamer)) return false;
+  const args = [renamer];
+  if (dryRun) args.push('--dry');
+  try { execFileSync(process.execPath, args, { cwd: ROOT, timeout: 600000, stdio: 'ignore' }); return true; }
+  catch (e) { say('rename failed: ' + e.message); return false; }
+}
+
+// B（2026-11-08 宝哥要求）：缺 meta 入队的成片留一条审计记录，便于以后追溯是哪条、品牌怎么定的。
+// 只写审计文件，绝不伪造 meta.json。
+function auditLegacyNoMeta() {
+  const list = inspectVideos().filter(v => v.legacy_no_meta);
+  const p = CONFIG.paths.legacy_no_meta_log || path.join(CONFIG.paths.work_dir, 'legacy_no_meta.json');
+  const prev = readJson(p, { records: [] });
+  const known = new Map((prev.records || []).map(r => [r.file, r]));
+  for (const v of list) {
+    if (known.has(v.file)) continue;
+    known.set(v.file, {
+      file: v.file, brand: v.brand, brand_source: v.brand_source,
+      at: new Date().toISOString(), note: '缺 meta：品牌取自文件名',
+    });
+  }
+  const records = [...known.values()];
+  writeJson(p, { updated_at: new Date().toISOString(), count: records.length, records });
+  return records;
 }
 
 module.exports = {
   ROOT, CONFIG, BRANDS,
-  ensureDir, readJson, writeJson, pushWeChat,
+  ensureDir, readJson, writeJson,
   todayStr, minutesOf, hhmmOf, dayIndex,
-  loadState, saveState, loadPlan, savePlan, ensurePlan, targetCount, buildTimes,
+  loadState, saveState, loadPlan, savePlan, ensurePlan, targetCount, buildTimes, planTimes, buildTimesProfiled,
+  brandUsage, publishedAtMs,
   inspectVideos, pickVideo, buildCopy, copyClean, seededRandom,
   brandConfirmed, quarantineUnconfirmed,
+  isPidAlive, resolvePython, chromiumPath, renameAll,
+  brandFromFilename, auditLegacyNoMeta,
 };

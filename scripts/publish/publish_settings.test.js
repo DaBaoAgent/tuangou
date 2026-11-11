@@ -6,7 +6,8 @@ const fs = require('fs');
 const { chromium } = require('playwright');
 const { ensureNotSimultaneous, verifyBeforePublish } = require('./publish_one');
 
-const CHROMIUM = 'C:/Users/20200/AppData/Local/ms-playwright/chromium-1248/chrome-win64/chrome.exe';
+// Chromium 路径统一由 lib 解析（A4），测试不再单独抄一份
+const CHROMIUM = require('./lib').chromiumPath();
 
 const ROW = `
   <div class="publish-settings">
