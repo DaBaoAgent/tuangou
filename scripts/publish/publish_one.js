@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const L = require('./lib');
-const { pickBestProduct, promoTitle } = require('./product_pick');
+const { decideProduct, promoTitle } = require('./product_pick');
 
 // Chromium（A4，2026-11-08）：环境变量 → config.publish.chromium_path → 扫 ms-playwright 最高版本；
 // 都没有就留空，走 playwright 自带的那一份，升级/换机不会整条断。
@@ -188,11 +188,21 @@ async function setProduct(page, { brand, product } = {}) {
     return { ok: false, reason: 'no-product-options' };
   }
 
-  const chosen = pickBestProduct(options, brand, { product });
-  if (!chosen) {
+  // 硬性选品规则（2026-11-11 宝哥定）：视频文案写了什么商品，就只挂那个商品的团购。
+  // 一条都不命中就不挂商品（调用方退回只挂门店），绝不为了「有链接」去挂错商品。
+  const decision = decideProduct(options, brand, { product });
+  if (!decision.ok) {
     await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-matching-product', candidates: options.length };
+    return {
+      ok: false,
+      reason: decision.reason,
+      candidates: options.length,
+      product,
+      terms: decision.terms,
+      mismatched: decision.rejected.slice(0, 3).map(r => r.title),
+    };
   }
+  const chosen = decision.best;
 
   await page.locator('.semi-select-option,[role=option]').nth(chosen.i).click({ force: true });
   await page.waitForTimeout(2500);
@@ -200,7 +210,8 @@ async function setProduct(page, { brand, product } = {}) {
   // 点选商品只打开抽屉，还要填「推广标题」+ 点「添加」才算挂上（2026-11-10 实跑）
   const sheet = page.locator('.semi-sidesheet').first();
   const base = { selected: chosen.title, store: chosen.store, price: chosen.price,
-    commission_rate: chosen.commission_rate, score: chosen.score, candidates: options.length };
+    commission_rate: chosen.commission_rate, score: chosen.score, candidates: options.length,
+    product_expected: product || null, product_match: chosen.matched_term || null };
   if (!(await sheet.count())) {
     await page.keyboard.press('Escape').catch(() => {});
     return { ok: false, reason: 'no-product-sheet', ...base };
@@ -400,8 +411,13 @@ async function publishOne(videoInfo, copy, opts = {}) {
     let loc = { ok: false, reason: 'skipped' };
     const locationBrand = videoInfo.locationBrand || videoInfo.brand;
     if (L.CONFIG.publish.attach_product && locationBrand) {
-      prod = await setProduct(page, { brand: locationBrand, product: videoInfo.product });
+      // 商品名以 meta 为准（人工确认过）；缺 meta 时用文案里的商品名兜底
+      const productName = videoInfo.product || (copy && copy.product) || null;
+      prod = await setProduct(page, { brand: locationBrand, product: productName });
       log('product ' + JSON.stringify(prod));
+      if (!prod.ok && prod.reason === 'product-mismatch') {
+        log(`product not attached: 文案商品「${productName}」在列表里没有对应团购，退回只挂门店`);
+      }
     }
     if (L.CONFIG.publish.add_location && locationBrand && !prod.ok) {
       loc = await setLocation(page, locationBrand);

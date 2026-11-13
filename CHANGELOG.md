@@ -2,6 +2,7 @@
 
 ## 2026-11-11
 
+- **选品硬规则：按视频文案里的商品名匹配，对不上就不挂商品**（宝哥 2026-11-11 定）：`product_pick.js` 新增 `productTerms()` / `decideProduct()`。商品名优先取 `meta.brand.product`，缺省用文案里识别出的商品词（`buildCopy()` 的 `product`，`run_due.js` 已写进计划 `copy.product`）；归一化时丢掉营销括号、价格、标点，剥掉品牌前缀和「2选1 / 大杯 / 套餐」等规格后缀，再在商品列表里做包含匹配——**命中者优先，命中词越长分越高**，同品牌的其他爆款/低价商品不会因为分高被选中。文案商品一条都匹配不到时返回 `product-mismatch`，`publish_one.js#setProduct()` 直接退出、退回只挂门店并在日志与通知里写明原因，**不改挂同品牌的其他商品**；商品名缺省、或本身等于品牌名/「套餐」「代金券」这类泛词时，视为文案未指定商品，才按品牌级规则挑（兼容老行为）。顺带修复 `productTerms()` 把「品牌前缀+单品」（如 `袁记云饺冬菇马蹄云饺`）误判成未指定商品的问题（原先 `productN.includes(brandN)` 会提前返回空词表），并把「品牌+套餐/双杯」这类只有泛词或规格的写法归为未指定商品，避免误触 `product-mismatch` 把整条商品挂载拦掉。`publish_one.js` 的返回与日志新增 `product_expected` / `product_match` / `mismatched`，方便核对挂的是不是文案里那款。回归：`product_pick.test.js` 新增 4 条「硬性规则」用例；全套 **85 项通过**。规则同步写入 `AGENTS.md` 长期规则第 5 条与 `scripts/publish/README.md`。
 - **发布节奏三件套（宝哥拍板「三件一起做」）**，针对 11-10 一天七条鸡柳大人 + 近 30 日 62 条均播 155 的问题：
   - **降量提质**：`schedule.ramp` 改为 day1=2 / day2=3 / day3=4，`steady_min/max` 3–5 条/天（原 5–8；同日宝哥定「随机 3–5 条」，`targetCount()` 用 `seededRandom` 在 3–5 间取值，同日可复现）；`min_gap_minutes` 25 → 90 分钟，避免多条挤在一小时内。时段加权采样同时修正：撞间隔时只重抽「这一条」，不再整轮作废——整轮作废会把偏好时段的权重一起洗掉，降量后尤其明显。
   - **同品牌冷却 + 每日上限**：新增 `schedule.brand_cooldown_minutes`（240）与 `brand_daily_cap`（2）。`lib.js#brandUsage()` 回看最近两天计划里 `status=published` 的条目（计划条目才带品牌；跨午夜冷却照样算，缺 `published_at` 用「计划日期 + at」近似），`queue_score.js#filterBrandRhythm()` 是纯函数过滤，`run_due.js` 在打分排序之后、选片之前应用。被挡的成片留在队列，换下一个品牌；全部品牌都在冷却时本轮跳过，每小时最多通知一次「团购发布等待品牌冷却」，绝不为填坑连发同品牌。`state.history` 同步补记 `brand` 字段。

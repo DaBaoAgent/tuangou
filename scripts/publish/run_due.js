@@ -303,7 +303,7 @@ async function main() {
     item.brand = video.brand;
     item.brand_uncertain = false;
     item.brand_topic_skipped = brandUncertain;
-    item.copy = { title: copy.title, desc: copy.desc, topics: copy.topics };
+    item.copy = { title: copy.title, desc: copy.desc, topics: copy.topics, product: copy.product || null };
     item.category = copy.category || null;
     item.queue_score = video.queue_score ?? null;
     item.queue_why = video.queue_why || null;
