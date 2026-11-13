@@ -86,9 +86,9 @@
         "KFC"
       ],
       "category": "汉堡炸鸡",
-      "verified": false,
+      "verified": true,
       "stores": [],
-      "note": "2026-11-02 宝哥两次更正确认：2026-11-02 15:27 发布的 11月1日_00791652.mp4 是肯德基素材。画面是仿品牌字，OCR 误读成 McS/McSa，不能只凭 OCR 判品牌；品牌不确定时须联网多搜索核验，仍不确定就跳过不发布。2026-11-02 人工复核：3E0A8657 与 00791652 同一场景同款包装，均为肯德基，已在各自 meta.json 标为 source=manual、confidence 0.95/0.92；FA7F65F3 后经宝哥 2026-11-04 在成片名标注为「鸡柳大人」，以最新人工标注为准"
+      "note": "2026-11-13 联网核实：百胜中国官网/财报，肯德基自1987年进入中国，截至2026年9月超2800城市14000家门店；此前 2026-11-02 宝哥确认过素材实为肯德基"
     },
     {
       "id": "haoxianglai",
@@ -275,9 +275,9 @@
         "古鲁特"
       ],
       "category": null,
-      "verified": false,
+      "verified": true,
       "stores": [],
-      "note": "auto-added 2026-11-07 from clip file names"
+      "note": "2026-11-13 联网核实：古鲁特烤肉自助官网 gulutezz.com，隶属江西麟创餐饮文化，全国500+门店（中国商报2026-05：超500家、覆盖200城）"
     },
     {
       "id": "auto_e5969ce5b1b1",
@@ -477,6 +477,108 @@
       "verified": true,
       "stores": [],
       "note": "2026-11-10 联网核实：袁记食品集团股份有限公司（广州起家），全国 4000+ 门店、江苏约 250 家，官网 yuanjiyunjiao.com.cn。11 月 7 日批次有 4 条「袁记云饺×三养」联名款成片，商户按袁记云饺挂门店"
+    },
+    {
+      "id": "ganfenyuan",
+      "name": "赣粉缘",
+      "aliases": [
+        "赣粉缘",
+        "赣粉缘江西米粉"
+      ],
+      "category": "米粉",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：江西米粉连锁，抖音官方账号有上海惠南/浦东航头/无锡荷花里/嘉兴南湖学院/苏州华东美食街门店"
+    },
+    {
+      "id": "nuanlipu",
+      "name": "暖栗铺",
+      "aliases": [
+        "暖栗铺",
+        "暖栗",
+        "LITTLE CHESTNUT"
+      ],
+      "category": "糖炒栗子",
+      "verified": false,
+      "stores": [],
+      "note": "2026-11-13：画面招牌+字幕均为暖栗铺，糖炒栗子；联网未查到工商/门店/媒体报道证据，保持未认证（挂门店、不挂品牌话题）；文件名标皇家粒，需人工确认投放商户"
+    },
+    {
+      "id": "kenyue_kafei",
+      "name": "肯悦咖啡",
+      "aliases": [
+        "肯悦咖啡",
+        "肯悦",
+        "KCOFFEE",
+        "K COFFEE"
+      ],
+      "category": "咖啡",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：百胜中国旗下 KCOFFEE 独立咖啡品牌，2022年首店，2026Q1 超2600家（新华网/百胜中国财报）"
+    },
+    {
+      "id": "tianxu",
+      "name": "甜序",
+      "aliases": [
+        "甜序",
+        "甜序蛋糕",
+        "甜序可颂"
+      ],
+      "category": "烘焙",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：苏州甜序蛋糕烘焙（姑苏留园路55号；木渎大运广场7幢102/103、石路店），企查查主体2026-10显示注销、门店仍在地图在列；素材字幕「来甜序记得带几份回去」"
+    },
+    {
+      "id": "shu_daxia",
+      "name": "蜀大侠",
+      "aliases": [
+        "蜀大侠",
+        "蜀大侠火锅"
+      ],
+      "category": "火锅",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：蜀大侠火锅官网 cd-sdx.com，成都火锅连锁，抖音团购有围炉开涮4-6人套餐"
+    },
+    {
+      "id": "suannaiguanguan",
+      "name": "酸奶罐罐",
+      "aliases": [
+        "酸奶罐罐",
+        "UCAN",
+        "u.can"
+      ],
+      "category": "酸奶",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：酸奶罐罐官网 suannaiguanguan.com，2023年上海首店，130+城市500+门店，罐装现制酸奶"
+    },
+    {
+      "id": "xingyunka",
+      "name": "幸运咖",
+      "aliases": [
+        "幸运咖",
+        "LUCKY CUP",
+        "LUCKYCUP"
+      ],
+      "category": "咖啡",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：蜜雪冰城旗下现磨咖啡品牌，2017年郑州首店，官网 xingyunka.com"
+    },
+    {
+      "id": "xu_xiansheng",
+      "name": "胥先生",
+      "aliases": [
+        "胥先生",
+        "胥先生鸭血粉丝汤"
+      ],
+      "category": "快餐",
+      "verified": true,
+      "stores": [],
+      "note": "2026-11-13 联网核实：胥先生官网 xuxiansheng.com.cn，2010年无锡首店，全国400+门店，主营鸭血粉丝汤"
     }
   ],
   "suspected": []

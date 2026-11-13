@@ -109,10 +109,17 @@ def _ocr_image(path, max_side_len=None):
         return []
     if data.get("code") != 100:
         raise RuntimeError(f"Dabao-OCR 返回错误 code={data.get('code')}: {data.get('data')}")
-    return [
-        {"text": str(b.get("text", "")).strip(), "score": float(b.get("score") or 0)}
-        for b in data.get("data") or []
-    ]
+    out = []
+    for b in data.get("data") or []:
+        box = b.get("box") or []
+        ys = [float(p[1]) for p in box if len(p) >= 2] if box else []
+        out.append({
+            "text": str(b.get("text", "")).strip(),
+            "score": float(b.get("score") or 0),
+            "box": box,
+            "h": (max(ys) - min(ys)) if ys else None,
+        })
+    return out
 
 
 def _extract_frames(video, frames_dir, fps, scale_width):

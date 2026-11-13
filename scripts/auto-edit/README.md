@@ -43,6 +43,25 @@ python scripts/auto-edit/auto_edit.py --all
 自动移入 `D:/BaiduSyncdisk/@同步/团购/未剪素材/已剪素材/`（`paths.done_source_dir`）；
 不要再用旧目录 `未剪素材/已剪`。加 `--no-move` 可保留源素材待人工复核。
 
+### 两条流水线，成片去处不同（2026-11-14 固化）
+
+| 源素材 | 成片去哪 | 是否自动发布 |
+|---|---|---|
+| `D:/BaiduSyncdisk/@同步/团购/未剪素材` | 同盘 `已剪成片`（`品牌-商品-序号.mp4`） | 否，宝哥自己处理 |
+| `素材库/未剪素材` | `素材库/已剪成片` | 是，`scripts/publish` 扫描队列 |
+
+百度盘线的归位用 `scripts/auto-edit/settle_sync_baidu.py`（默认 dry-run，`--apply` 才动）：
+
+```bash
+python scripts/auto-edit/settle_sync_baidu.py --batch-dir runtime/auto-edit/out-baidu-20261113
+python scripts/auto-edit/settle_sync_baidu.py --batch-dir ... --apply
+```
+
+它做三件事：把成片复制到百度盘 `已剪成片`（已存在的跳过）、把 `未剪素材` 顶层源素材移入
+`已剪素材`、把 `meta.output` 与 `brand_index.json` 同步指向实际路径。脚本会拒绝以项目发布
+队列为目标目录——百度盘线的成片**绝不复制进 `素材库/已剪成片`**，否则自动发布会误抓。
+
+
 ## 素材自带字幕
 
 按 2fps 抽 360×640 帧，逐行统计「亮字核心 + 邻域暗描边」像素，连续成带的行算一层

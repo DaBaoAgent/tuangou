@@ -105,3 +105,30 @@
 - **每天随机 3–5 条**：`steady_min=3 / steady_max=5`，`targetCount()` 用日期种子取整，同日可复现；实测 11-11..17 = 3/3/3/4/5/3/5，间隔 ≥90 分钟、窗口 06:00–19:00 不变。今天（11-11）目标 3 条，原计划不用重排。
 - 验证：`node --test scripts/publish/*.test.js` **81/81 通过**；`node --check` / `py_compile` 通过；`run_due.js` 与品牌闸门 dry-run 均为 0 异常。
 - 仍存风险：① 瑞幸咖啡-小黄油美式-05 重渲后被字幕审计拦在 `字幕待修复/`（首句「终于等到它回归了」OCR 复核不过，属已知首句 + 开头特效问题），未强行放行；② 钩子覆盖仍偏低（缺源片 8/27≈30%，全库约 39%），效果要等这批发出去看 2 秒跳出/完播；③ 本轮改动**尚未 git commit**。
+
+2026-11-11 选品硬规则固化（宝哥定）：**选品优先匹配视频文案里的商品名，对不上就不挂商品。**
+- 规则：作品商品名取 `meta.brand.product`（人工确认过），缺省用文案里识别出的商品词（`buildCopy().product`，`run_due.js` 已写入计划条目 `copy.product`）；`product_pick.js#productTerms()` 归一化后（丢营销括号/价格/标点，剥品牌前缀与「2选1/大杯/套餐」等规格后缀）在商品列表里做包含匹配，命中者优先、命中词越长越优先。一条都不命中 → `decideProduct()` 返回 `product-mismatch`，`publish_one.js#setProduct()` 直接退出，**退回只挂门店**并在日志/通知里写明，不改挂同品牌其他商品。商品名缺省、或商品名等于品牌名/泛词（套餐、代金券等）时视为文案未指定，才走品牌级挑选。
+- 修复：`productTerms()` 原先把「袁记云饺冬菇马蹄云饺」这类「品牌前缀+单品」误判成没指定商品（`productN.includes(brandN)` 提前 return 空词表），已改为只在商品名等于品牌名、或商品名是品牌名子串时放空；该类商品名现在正确剥前缀后参与匹配。同时把「品牌+套餐/双杯」这类只有泛词或规格的写法也归为未指定商品，避免误触 `product-mismatch` 把整条商品挂载拦掉。
+- 代码：`product_pick.js`（新增 `productTerms` / `decideProduct`）、`publish_one.js`（用 `decideProduct` 的 ok/reason/terms，商品名 meta 优先、copy 兜底，日志与返回里带 `product_expected` / `product_match` / `mismatched`）、`run_due.js`（计划条目记 `copy.product`）。回归：`product_pick.test.js` 新增 4 条「硬性规则」用例（命中优先于更火爆款、零命中不挂、品牌名/泛词退回品牌级、括号规格与品牌前缀归一化）。
+- 文档固化：`AGENTS.md` 长期规则第 5 条、`scripts/publish/README.md` 选品硬规则段与模块表、本节。
+- 验证：`node --test scripts/publish/*.test.js` **85/85 通过**（原 81 + 新增 4）。本轮改动仍未 git commit。
+
+
+2026-11-13 百度同步盘 44 条素材按新规范剪完并归位（宝哥指令「按新的规范剪辑了归位」）：
+- 批次：`D:\BaiduSyncdisk\@同步\团购\未剪素材` 44 条（11 组×4，720×1280/24fps/15.04s）；成片 44 条已按 `品牌-商品-序号` 进 `素材库/已剪成片`，源素材 44 条移入 `未剪素材/已剪素材`，顶层已空。明细见 `docs/handover/剪辑批次-20261113.md`。
+- 品牌核实 10 个：赣粉缘、古鲁特、肯德基、肯悦咖啡、蜀大侠、酸奶罐罐、幸运咖、胥先生 verified=true；两处文件名与视频实际不符，按视频内容认定并在 brand_overrides 固化——**皇家粒→暖栗铺**（糖炒栗子，联网无工商/门店证据，verified=false，挂门店不挂话题）、**泸溪河→甜序**（苏州甜序蛋糕烘焙，verified=true）。brands.json 新增 8 个品牌，古鲁特/肯德基补核实 note。
+- 剪辑：推近 44/44；36 条自带烧录字幕按规则跳过字幕层保留原字幕；9 条无可用字幕只出画面（8 条像素+OCR 双证无字幕，1 条素材自带错字「薄脆金沙更」，不猜字）；钩子卡 12 条（13 条选中、1 条半句撤销）。自检 44/44 通过。
+- 修复：`_ocr_band` 坐标按源分辨率换算（原按 1080×1920 裁 720×1280 帧越界，钩子全失败）；新增 `detect_legacy_by_ocr` 兜底；钩子 OCR 加单行/置信度/8 字校验；`subtitle_skipped` 在只出画面时记 True（原记 False 被字幕闸门判 manual，已回填 6 条）。
+- 闸门：品牌 dry-run moved=0；字幕 dry-run manual=0 / failed=0 / moved=0。本批改动尚未 git commit。
+
+2026-11-14 归位目录更正（宝哥指出放错）：成片位置改为 `D:\BaiduSyncdisk\@同步\团购\已剪成片`，源素材仍进 `未剪素材\已剪素材`。
+- 44 条成片已从 `D:\@kaifa\tuangou\素材库\已剪成片` 移动到百度盘 `已剪成片`（11 组各 4 条，目录内只有这 44 个 mp4，无多余文件）；`meta.output` 44 条、`brand_index.json` 44 条路径同步改为百度盘绝对路径。
+- 项目发布队列（`scripts/publish/config.json#paths.video_dir` = `素材库/已剪成片`）顶层现剩 63 条历史成片，本批不在自动发布队列内。若这批仍要走自动发布，需把 `video_dir` 指向百度盘目录，或把成片复制回队列（两者未做，等宝哥定）。
+- 剪辑批次明细见 `docs/handover/剪辑批次-20261113.md`。
+
+2026-11-14 双流水线固化（宝哥选「百度盘的我我自己处理，项目内素材才自动进队列」）：
+- 规则写进 `AGENTS.md` 长期规则第 6 条、`scripts/auto-edit/README.md`「两条流水线」段。
+- **百度盘线**：源 `D:\BaiduSyncdisk\@同步\团购\未剪素材` → 成片 `D:\BaiduSyncdisk\@同步\团购\已剪成片`（`品牌-商品-序号.mp4`），源素材 `未剪素材\已剪素材`；成片**不进项目发布队列**，由宝哥自己处理。归位入口固化为 `scripts/auto-edit/settle_sync_baidu.py`（默认 dry-run，`--apply` 才动；会拒绝以 `素材库/已剪成片` 为目标目录）。
+- **项目线**：源 `素材库/未剪素材` → 成片 `素材库/已剪成片` → `scripts/publish` 自动发布；`config.json#paths.video_dir` 保持 `素材库/已剪成片`，不改指百度盘。
+- 实跑验证：`settle_sync_baidu.py --batch-dir runtime\auto-edit\out-baidu-20261113` 识别本批 44 条「已在成片目录」、源素材归档 0 条待办；品牌闸门/字幕闸门（队列 63 条）仍 moved=0 / manual=0。
+- 补充：宝哥仍未 git commit。

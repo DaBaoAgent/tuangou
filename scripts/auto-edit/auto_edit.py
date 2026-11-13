@@ -587,19 +587,63 @@ def _hook_phrases(lines, asr, max_chars):
     return phrases
 
 
+_SIZE_CACHE = {}
+
+
+def _clip_size(clip):
+    """源素材实际分辨率；缓存。烧录字幕带坐标是按成片 1080x1920 记的，裁源帧要按比例换算。"""
+    key = str(clip)
+    if key in _SIZE_CACHE:
+        return _SIZE_CACHE[key]
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "default=nw=1",
+             "-i", key],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        kv = dict(line.split("=", 1) for line in out.strip().splitlines() if "=" in line)
+        size = (int(kv["width"]), int(kv["height"]))
+    except Exception:
+        size = (None, None)
+    _SIZE_CACHE[key] = size
+    return size
+
+
 def _ocr_band(cfg, clip, workdir, t, band):
     """抽一帧、裁到烧录字幕带、OCR，返回该帧上的字幕文本（逐块）。"""
     w = int(cfg["video"]["width"])
     y0, y1 = band
+    src_w, src_h = _clip_size(clip)
+    if src_w and src_w != w:
+        s = src_w / float(w)
+        y0 = max(0, int(round(y0 * s)))
+        y1 = min(src_h, int(round(y1 * s)))
+    if y1 - y0 < 8:
+        return []
     frame = workdir / f"hook_ocr_{int(round(t * 10)):03d}.jpg"
+    crop_h = max(1, y1 - y0)
     try:
-        ffmpeg("-ss", f"{t:.2f}", "-i", str(clip), "-frames:v", "1",
-               "-vf", f"crop={w}:{y1 - y0}:0:{y0}", "-q:v", "3", str(frame))
+        ffmpeg("-ss", f"{t:.2f}", "-i", str(clip), "-frames:v", "1", "-update", "1",
+               "-vf", f"crop={src_w or w}:{y1 - y0}:0:{y0}", "-q:v", "3", str(frame))
         blocks = brand_ocr._ocr_image(frame, max_side_len=2048)
     except Exception as exc:
         log(f"钩子读字幕失败 @{t:.1f}s：{exc}")
         return []
-    return [clean_text(b.get("text", "")) for b in blocks if float(b.get("score") or 0) >= 0.5]
+    out = []
+    for b in blocks:
+        score = float(b.get("score") or 0)
+        if score < 0.85:
+            continue
+        bh = b.get("h")
+        # 一块横跨整条字幕带 = OCR 把上下两行并成一句（样片出过「粉糯绵密香甜腻百换」），
+        # 按「宁可不加卡也不上错字」直接丢；太矮的碎片也丢。
+        if bh is not None and (bh > crop_h * 0.98 or bh < crop_h * 0.22):
+            continue
+        text = clean_text(b.get("text", ""))
+        if text:
+            out.append(text)
+    return out
 
 
 def hook_from_legacy_ocr(cfg, clip, workdir, legacy, dur):
@@ -612,6 +656,8 @@ def hook_from_legacy_ocr(cfg, clip, workdir, legacy, dur):
     if not h.get("enabled", False) or not legacy or brand_ocr is None:
         return None
     max_chars = int(h.get("max_chars", 10))
+    # 画面字幕 OCR 的长句更容易把两行并进来/读错字，钩子只收 8 字以内
+    max_chars = min(max_chars, 8)
     keywords = [str(k) for k in h.get("keywords", []) if str(k)]
     window = float(h.get("duration", 1.5)) + 1.0
     max_start = float(h.get("max_start_seconds", 9.0))
@@ -744,6 +790,60 @@ def pick_hook(cfg, lines, asr, fallback=None):
 
 # ---------------------------------------------------------------- legacy subtitle bar
 
+def detect_legacy_by_ocr(cfg, video, workdir, dur):
+    """像素法漏检时的兜底：整帧 OCR 找画面下半部的字幕块，定位烧录字幕带。
+
+    2026-11-13 这批 720x1280 素材有 8 条像素法测不到（字幕字号小/描边淡），
+    按 ASR 重打会叠出双字幕且错字，宁可先用 OCR 把位置认出来再跳过字幕层。
+    """
+    if brand_ocr is None:
+        return []
+    W = int(cfg["video"]["width"])
+    H = int(cfg["video"]["height"])
+    src_w, src_h = _clip_size(video)
+    if not src_w or not src_h:
+        return []
+    ys = []
+    t = 1.0
+    ts = []
+    while t < dur - 0.5 and len(ts) < 10:
+        ts.append(t)
+        t += max(1.2, (dur - 1.5) / 8.0)
+    for t in ts:
+        frame = workdir / f"legacy_probe_{t:.1f}.jpg"
+        try:
+            ffmpeg("-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1", "-update", "1",
+                   "-q:v", "3", str(frame))
+            blocks = brand_ocr._ocr_image(frame, max_side_len=1536)
+        except Exception as exc:
+            log(f"字幕带 OCR 探测失败 @{t:.1f}s：{exc}")
+            continue
+        for b in blocks:
+            box = b.get("box") or []
+            text = clean_text(b.get("text", ""))
+            score = float(b.get("score") or 0)
+            if len(box) < 3 or len(text) < 4 or score < 0.75:
+                continue
+            xs = [float(p[0]) for p in box]
+            yy = [float(p[1]) for p in box]
+            top, bot = min(yy), max(yy)
+            if top < src_h * 0.55:
+                continue
+            if (max(xs) - min(xs)) < src_w * 0.22:   # 太窄：价格贴纸/角标
+                continue
+            if (bot - top) > src_h * 0.09:            # 太高：多行或整块招牌
+                continue
+            ys.append((top, bot))
+    if not ys:
+        return []
+    s = H / float(src_h)
+    y0 = max(0, int(min(y for y, _ in ys) * s) - 6)
+    y1 = min(H, int(max(b for _, b in ys) * s) + 6)
+    if y1 - y0 < 12:
+        return []
+    return [{"y0": y0, "y1": y1, "t0": 0.0, "t1": dur}]
+
+
 def detect_legacy_bars(cfg, video, workdir, dur):
     """检测素材里自带的烧录字幕带。
 
@@ -808,7 +908,7 @@ def detect_legacy_bars(cfg, video, workdir, dur):
         bands.append((start, H - 1))
     bands = [(a, b) for a, b in bands if ls["min_height_720"] / 2 <= b - a + 1 <= ls["max_height_720"] / 2]
     if not bands:
-        return []
+        return detect_legacy_by_ocr(cfg, video, workdir, dur)
 
     # 低阈值把淡淡的上/下边缘行也算回来，只在各层自己范围内扩展，不跨层合并
     tight = []
@@ -1267,7 +1367,9 @@ def process_clip(cfg, clip, args):
         "bgm": str(bgm),
         "brand": brand,
         "legacy_sub": legacy,
-        "subtitle_skipped": skip_subs,
+        # 没有叠字幕也要记 True：校对稿 skip（原素材无字幕、ASR 错字多）时
+        # 字幕闸门要能认出「这条本来就没有字幕层」，否则当「缺少字幕依据」卡成 manual
+        "subtitle_skipped": bool(skip_subs or skip_by_correction),
         "lines": lines,
         "hook": hook,
         "opening_fx": bool(fx_frames),
