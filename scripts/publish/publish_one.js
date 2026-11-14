@@ -94,22 +94,75 @@ async function setCovers(page) {
   const dlgSelector = '.dy-creator-content-modal-content';
   if (!(await page.locator(dlgSelector).count())) return { ok: false, reason: 'cover-dialog-missing' };
 
-  // 竖封面「完成」后，抖音会自动基于竖封面生成横封面
-  await clickByTextIn(page, dlgSelector, '完成');
-  await page.waitForTimeout(2500);
+  // 2026-11-14 实跑修正：这个弹窗是「设置竖封面 / 设置横封面」两个 tab，
+  // 只点一次「完成」只保存竖封面，发文助手会一直挂「横/竖双封面缺失」。
+  // 正确做法：竖封面 tab 点完成 → 重新打开弹窗 → 切到横封面 tab → 再点完成。
+  const tabDone = async (tabName) => {
+    const tab = page.locator(dlgSelector).getByText(tabName, { exact: true }).first();
+    if (await tab.count()) { await tab.click({ force: true }).catch(() => {}); await page.waitForTimeout(1800); }
+    const done = page.locator(dlgSelector).getByText('完成', { exact: true }).first();
+    if (await done.count()) await done.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(2600);
+    // 「设置横封面获更多流量」营销弹窗：直接关掉，横封面自己走 tab 设
+    for (let i = 0; i < 3; i++) {
+      const promo = await page.locator('text=设置横封面获更多流量').count();
+      if (!promo) break;
+      await clickByTextIn(page, null, '暂不设置');
+      await page.waitForTimeout(700);
+    }
+    const stillOpen = await page.locator(dlgSelector).count();
+    if (stillOpen) {
+      const closeBtn = page.locator(`${dlgSelector} .semi-modal-close, ${dlgSelector} [aria-label="Close"]`).first();
+      if (await closeBtn.count()) await closeBtn.click({ force: true }).catch(() => {});
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(1200);
+    }
+  };
 
-  // 可能出现「设置横封面获更多流量」提示框：横封面已自动生成，选暂不设置
-  for (let i = 0; i < 3; i++) {
-    const promo = await page.locator('text=设置横封面获更多流量').count();
-    if (!promo) break;
-    await clickByTextIn(page, null, '暂不设置');
-    await page.waitForTimeout(700);
+  await tabDone('设置竖封面');
+
+  // 横封面：保存竖封面后弹窗关闭，页面会浮出提示「已基于竖封面为你生成横封面。效果不满意？独立编辑」。
+  // 抖音自动生成的那张横封面，发文助手仍判「横封面缺失」，必须点「独立编辑」进横封面 tab 再保存一次。
+  // 2026-11-14 实跑：此时「选择封面」按钮已消失，只能走「独立编辑」。
+  let horizontalEdits = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const editLink = page.getByText('独立编辑', { exact: true }).first();
+    if (!(await editLink.count())) {
+      await page.mouse.move(560, 470);
+      await page.waitForTimeout(900);
+    }
+    const link = page.getByText('独立编辑', { exact: true }).first();
+    if (!(await link.count())) break;
+    await link.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(2500);
+    if (!(await page.locator(dlgSelector).count())) break;
+    const htab = page.locator(dlgSelector).getByText('设置横封面', { exact: true }).first();
+    if (await htab.count()) { await htab.click({ force: true }).catch(() => {}); await page.waitForTimeout(2200); }
+    const done2 = page.locator(dlgSelector).getByText('完成', { exact: true }).first();
+    if (await done2.count()) await done2.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(3000);
+    horizontalEdits += 1;
+    if (await page.locator(dlgSelector).count()) {
+      const closeBtn = page.locator(`${dlgSelector} .semi-modal-close, ${dlgSelector} [aria-label="Close"]`).first();
+      if (await closeBtn.count()) await closeBtn.click({ force: true }).catch(() => {});
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(1200);
+    }
+    const b0 = await page.locator('body').innerText();
+    if (!(/横封面缺失/.test(b0))) break;
   }
-  // 若弹窗仍在，关闭它
-  const closeBtn = page.locator('.dy-creator-content-modal-content .semi-modal-close, .dy-creator-content-modal-content [aria-label="Close"]').first();
-  if (await closeBtn.count()) await closeBtn.click({ force: true }).catch(() => {});
+  // 发文助手的检测结果会滞后，主动点一次「重新检测」再判
+  const redetect = page.getByText('重新检测', { exact: true }).first();
+  if (await redetect.count()) { await redetect.click({ force: true }).catch(() => {}); await page.waitForTimeout(3000); }
+  // 「检测中 35%」阶段文案是旧的，等它跑完再读结论
+  for (let i = 0; i < 14; i++) {
+    const b = await page.locator('body').innerText();
+    if (!/检测中/.test(b)) break;
+    await page.waitForTimeout(3000);
+  }
   const body = await page.locator('body').innerText();
-  return { ok: !body.includes('横/竖双封面缺失'), missing: body.includes('横/竖双封面缺失') };
+  const missing = body.includes('横/竖双封面缺失') || body.includes('横封面缺失');
+  return { ok: !missing, missing, horizontalEdits };
 }
 
 async function setLocation(page, brand) {
@@ -149,12 +202,24 @@ async function setProduct(page, { brand, product } = {}) {
   if (!brand) return { ok: false, reason: 'no-brand' };
   // 标签行里的「位置」是类型下拉入口；直接点「输入地理位置」只会打开 POI 搜索面板，
   // 那里没有团购入口（2026-11-10 实跑发现，改成点标签 chip）
-  const chip = page.getByText('位置', { exact: true }).first();
-  if (!(await chip.count())) return { ok: false, reason: 'no-location-chip' };
-  await chip.click({ force: true });
-  await page.waitForTimeout(1500);
+  // 标签行的类型下拉是一个 semi-select（文本显示「位置」）。2026-11-14 实跑发现
+  // 直接点文字节点打不开菜单，必须按 semi-select 触发器本体点击；菜单项在
+  // .semi-select-option 里，选项有 位置 / 团购 / 购物车 / 影视演艺 / 小程序 / 游戏手柄 / 标记万物。
+  const trigger = page.locator('.semi-select').filter({ hasText: /^位置$/ }).first();
+  if (await trigger.count()) {
+    // 必须让 playwright 自己 scrollIntoView 再点：标签行常在视口下方，
+    // 手动算坐标 mouse.click 会点到视口外（2026-11-14 踩过，选项一直取不到）
+    await trigger.scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(400);
+    await trigger.click({ force: true });
+  } else {
+    const chip = page.getByText('位置', { exact: true }).first();
+    if (!(await chip.count())) return { ok: false, reason: 'no-location-chip' };
+    await chip.click({ force: true });
+  }
+  await page.waitForTimeout(1600);
 
-  const tg = page.getByText('团购', { exact: true }).first();
+  const tg = page.locator('.semi-select-option').filter({ hasText: /^团购$/, visible: true }).first();
   if (!(await tg.count())) {
     await page.keyboard.press('Escape').catch(() => {});
     return { ok: false, reason: 'no-tuangou-option' };
@@ -162,49 +227,68 @@ async function setProduct(page, { brand, product } = {}) {
   await tg.click({ force: true });
   await page.waitForTimeout(2000);
 
-  const picker = page.getByText('请选择团购商品', { exact: true }).first();
-  if (!(await picker.count())) {
+  // 挂不上商品时必须把标签类型退回「位置」，否则团购类型留在那里、位置框消失，
+  // 后续 setLocation 也挂不上门店（2026-11-14 踩过：loc=no-location-input）。
+  const resetType = async () => {
     await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-product-picker' };
-  }
+    await page.waitForTimeout(500);
+    const t2 = page.locator('.semi-select').filter({ hasText: /^(位置|团购)$/ }).first();
+    if (!(await t2.count())) return;
+    await t2.scrollIntoViewIfNeeded().catch(() => {});
+    await t2.click({ force: true });
+    await page.waitForTimeout(1200);
+    const posOpt = page.locator('.semi-select-option').filter({ hasText: /^位置$/, visible: true }).first();
+    if (await posOpt.count()) { await posOpt.click({ force: true }); await page.waitForTimeout(1500); }
+  };
+  const fail = async (payload) => { await resetType(); return { ok: false, ...payload }; };
+
+  const picker = page.getByText('请选择团购商品', { exact: true }).first();
+  if (!(await picker.count())) return fail({ reason: 'no-product-picker' });
   await picker.click({ force: true });
   await page.waitForTimeout(3000);
 
   const input = page.locator('.semi-select-open input').first();
-  if (!(await input.count())) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-search-input' };
-  }
-  await input.click().catch(() => {});
-  await page.keyboard.press('Control+A').catch(() => {});
-  await page.keyboard.type(brand, { delay: 60 });
-  await page.waitForTimeout(3200);
+  if (!(await input.count())) return fail({ reason: 'no-search-input' });
 
-  const options = await page.evaluate(() => [...document.querySelectorAll('.semi-select-option,[role=option]')]
+  const readOptions = () => page.evaluate(() => [...document.querySelectorAll('.semi-select-option,[role=option]')]
     .map((el, i) => ({ i, text: (el.innerText || '').trim() }))
     .filter(o => o.text));
-  if (!options.length) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-product-options' };
+  const typeTerm = async (term) => {
+    await input.click().catch(() => {});
+    await page.keyboard.press('Control+A').catch(() => {});
+    await page.keyboard.type(term, { delay: 60 });
+    await page.waitForTimeout(3200);
+    return readOptions();
+  };
+
+  // 先用商品词搜（比按品牌搜准得多），搜不到再用品牌搜
+  let options = await typeTerm(product || brand);
+  let decision = decideProduct(options, brand, { product });
+  if (!decision.ok && product && product !== brand) {
+    const byBrand = await typeTerm(brand);
+    if (byBrand.length > options.length) options = byBrand;
+    const d2 = decideProduct(options, brand, { product });
+    if (d2.ok) decision = d2;
   }
+  if (!options.length) return fail({ reason: 'no-product-options' });
 
   // 硬性选品规则（2026-11-11 宝哥定）：视频文案写了什么商品，就只挂那个商品的团购。
   // 一条都不命中就不挂商品（调用方退回只挂门店），绝不为了「有链接」去挂错商品。
-  const decision = decideProduct(options, brand, { product });
   if (!decision.ok) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return {
-      ok: false,
+    return fail({
       reason: decision.reason,
       candidates: options.length,
       product,
       terms: decision.terms,
       mismatched: decision.rejected.slice(0, 3).map(r => r.title),
-    };
+    });
   }
   const chosen = decision.best;
 
-  await page.locator('.semi-select-option,[role=option]').nth(chosen.i).click({ force: true });
+  // 商品列表索引跟 DOM 顺序一致，但隐藏项会错位，按文本重新定位
+  const chosenLoc = page.locator('.semi-select-option,[role=option]').filter({ hasText: chosen.title }).first();
+  if (await chosenLoc.count()) await chosenLoc.click({ force: true });
+  else await page.locator('.semi-select-option,[role=option]').nth(chosen.i).click({ force: true });
   await page.waitForTimeout(2500);
 
   // 点选商品只打开抽屉，还要填「推广标题」+ 点「添加」才算挂上（2026-11-10 实跑）
@@ -212,27 +296,18 @@ async function setProduct(page, { brand, product } = {}) {
   const base = { selected: chosen.title, store: chosen.store, price: chosen.price,
     commission_rate: chosen.commission_rate, score: chosen.score, candidates: options.length,
     product_expected: product || null, product_match: chosen.matched_term || null };
-  if (!(await sheet.count())) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-product-sheet', ...base };
-  }
+  if (!(await sheet.count())) return fail({ reason: 'no-product-sheet', ...base });
   const titleInput = sheet.locator('input.semi-input').first();
   // 推广标题用商品名+规格，不再只写品牌名（2026-11-10 新规：锚点标题应贴近商品本身）
   const promo = promoTitle(chosen, brand);
-  if (!(await titleInput.count())) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-promo-title-input', ...base };
-  }
+  if (!(await titleInput.count())) return fail({ reason: 'no-promo-title-input', ...base });
   await titleInput.fill(promo);
   const sameBrand = sheet.getByText('仅推荐同品牌商品', { exact: true }).first();
   if (await sameBrand.count()) await sameBrand.click({ force: true }).catch(() => {});
   await page.waitForTimeout(500);
 
   const add = sheet.getByText('添加', { exact: true }).first();
-  if (!(await add.count())) {
-    await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-add-button', ...base };
-  }
+  if (!(await add.count())) return fail({ reason: 'no-add-button', ...base });
   await add.click();
   await page.waitForTimeout(3000);
 
@@ -244,7 +319,8 @@ async function setProduct(page, { brand, product } = {}) {
     return r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden';
   })).catch(() => false);
   const applied = pickerGone && !maskVisible;
-  return { ok: applied, reason: applied ? null : 'product-not-applied', promo_title: promo, ...base };
+  if (!applied) return fail({ reason: 'product-not-applied', promo_title: promo, ...base });
+  return { ok: true, promo_title: promo, ...base };
 }
 
 // 控件的文字标签：优先 label，其次 aria/title，再退回相邻兄弟；
@@ -361,7 +437,7 @@ async function verifyBeforePublish(page, settings = {}) {
       && (settings.syncChecked || []).length === 0 && syncCheckedLive.length === 0,
     syncCheckedLive,
     publishNow: body.includes('立即发布'),
-    coverMissing: body.includes('横/竖双封面缺失'),
+    coverMissing: body.includes('横/竖双封面缺失') || body.includes('横封面缺失'),
     hasLocation: !body.includes('输入地理位置'),
   };
 }
@@ -438,6 +514,11 @@ async function publishOne(videoInfo, copy, opts = {}) {
 
     const check = await verifyBeforePublish(page, settings);
     log('precheck ' + JSON.stringify(check));
+    // 审核要看整张表单：先滚到顶拍标题/简介/话题区，再拍整页，最后拍当前视口
+    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: path.join(shots, `${stamp}_before_publish_top.png`), fullPage: false });
+    await page.screenshot({ path: path.join(shots, `${stamp}_before_publish_full.png`), fullPage: true });
     await page.screenshot({ path: path.join(shots, `${stamp}_before_publish.png`), fullPage: false });
 
     if (dryRun) {

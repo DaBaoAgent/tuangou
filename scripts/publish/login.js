@@ -1,6 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const L = require('./lib');
 
 // 项目根按本文件位置推导（B1，2026-11-08）：换盘/换目录不用改这里
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -18,14 +19,18 @@ async function isLoggedIn(page) {
 }
 
 (async () => {
-  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
-    channel: 'chrome',
-    headless: false,
+  // 2026-11-14：本机没装系统 Chrome，channel:'chrome' 起不来；统一走 lib.chromiumPath()
+  // （环境变量 → config → ms-playwright 里最高的 chromium），仍然带界面，方便扫码。
+  const EXE = L.chromiumPath();
+  const launchOpts = {
+    headless: !!process.env.TUANGOU_LOGIN_HEADLESS,
     viewport: null,
     args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
     locale: 'zh-CN',
     timezoneId: 'Asia/Shanghai',
-  });
+  };
+  if (EXE) launchOpts.executablePath = EXE;
+  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, launchOpts);
   const page = ctx.pages()[0] || await ctx.newPage();
   await page.goto('https://creator.douyin.com/creator-micro/home', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(4000);
