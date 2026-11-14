@@ -32,9 +32,9 @@
         "count": 4
       }
     ],
-    "steady_min": 3,
-    "steady_max": 5,
-    "min_gap_minutes": 90,
+    "steady_min": 8,
+    "steady_max": 8,
+    "min_gap_minutes": 80,
     "brand_cooldown_minutes": 240,
     "brand_daily_cap": 2,
     "start_date": "2026-11-01"
