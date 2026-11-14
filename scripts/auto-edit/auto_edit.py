@@ -1229,6 +1229,16 @@ def process_clip(cfg, clip, args):
                 f"{b['y0']}-{b['y1']} @ {b['t0']:.1f}-{b['t1']:.1f}s" for b in legacy
             ))
     sub_mode = cfg["legacy_sub"].get("mode", "skip")
+    # 像素检出的小字块未必是烧录字幕：杯身/包装上的品牌字（K COFFEE、UCan…）常被误判成字幕带，
+    # 照 cover 遮下去会把商品主标模糊掉。校对稿可用 "cover": false 关掉本片遮盖，或用
+    # "cover": [{y0,y1,t0,t1}] 显式指定要遮的带。
+    corr_cover = corrections.get("cover") if isinstance(corrections, dict) else None
+    if corr_cover is False:
+        if legacy:
+            log("校对稿指定不遮盖：检出的是画面里的商品字，不是烧录字幕")
+        legacy = []
+    elif isinstance(corr_cover, list):
+        legacy = corr_cover
     skip_subs = bool(legacy) and sub_mode != "cover" and cfg["subtitle"].get("skip_if_legacy", True)
     cover_bars = legacy if (legacy and sub_mode == "cover") else []
     if cover_bars:
