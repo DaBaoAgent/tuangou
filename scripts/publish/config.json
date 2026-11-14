@@ -1,7 +1,7 @@
 {
   "paths": {
     "video_dir": "素材库/已剪成片",
-    "published_dir": "素材库/已剪成片/已发",
+    "published_dir": "素材库/已剪成片/已发成片",
     "brand_review_dir": "素材库/已剪成片/品牌待确认",
     "subtitle_review_dir": "素材库/已剪成片/字幕待修复",
     "subtitle_audit_cache": "runtime/publish/subtitle_audit.json",
