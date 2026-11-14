@@ -173,11 +173,21 @@
 
 2026-11-14 本机（公司2）正式接手发布，第一条已发出（宝哥指令「本机队列在 TY 已全过，一起放行；TY 停止发布和所有进程，你这边接手发布第一条」）：
 
-- **TY 停机**（client:582478:1581572652542794）：Disable-ScheduledTask TuangouPrepare/TuangouPublish/TuangouStats → 三个任务全 Disabled；untime/publish/state.json 置 `paused=true`（reason=交接给公司2），un_due.js 第 161 行早退生效；复查无 tuangou 相关 node/chrome/wscript 进程。TY 今日实发 4 条（08:58 古鲁特-烤肉自助-01、10:31 好想来-99代100-01、11:58 库迪-OATLY燕麦奶真南瓜咖啡-01、13:22 古鲁特-烤肉自助-02），原 8 条计划剩 14:44/16:06/17:29/18:50 四段。
+- **TY 停机**（client:582478:1581572652542794）：Disable-ScheduledTask TuangouPrepare/TuangouPublish/TuangouStats → 三个任务全 Disabled；runtime/publish/state.json 置 `paused=true`（reason=交接给公司2），run_due.js 第 161 行早退生效；复查无 tuangou 相关 node/chrome/wscript 进程。TY 今日实发 4 条（08:58 古鲁特-烤肉自助-01、10:31 好想来-99代100-01、11:58 库迪-OATLY燕麦奶真南瓜咖啡-01、13:22 古鲁特-烤肉自助-02），原 8 条计划剩 14:44/16:06/17:29/18:50 四段。
 - **已发成片归档**：TY 今日已发的 3 条 + 本机首发的 1 条都在 `素材库/已剪成片/已发成片`（该目录即原 `已发`，宝哥口述名；config.paths.published_dir 已改为 `素材库/已剪成片/已发成片`，commit `646ddfb`），TY 那 69 条历史归档仍在 TY 的 `已发` 里未搬。
-- **字幕闸门放行**：本机缺 meta/审计缓存时 59 条全 manual。按宝哥口径写缓存（untime/publish/subtitle_audit.json，status:"ok"，reason=「本机队列已在 TY 侧复核通过，合并放行」），复核 `cached=54 manual=0 failed=0`。
-- **一个坑**：un_due.js 开头的 enameAll 会用 ename_final.js 按现行序号重排成片名，重排后闸门缓存键（=去扩展名的成片名）全部失配，54 条又变 manual。重排是幂等的（再跑 --dry 是 enamed=0），已把重排后的名字提交（commit `e044654`）；**以后凡是成片改名，必须同时重写闸门缓存**，否则发布会被静默卡住。
+- **字幕闸门放行**：本机缺 meta/审计缓存时 59 条全 manual。按宝哥口径写缓存（runtime/publish/subtitle_audit.json，status:"ok"，reason=「本机队列已在 TY 侧复核通过，合并放行」），复核 `cached=54 manual=0 failed=0`。
+- **一个坑**：run_due.js 开头的 renameAll 会用 rename_final.js 按现行序号重排成片名，重排后闸门缓存键（=去扩展名的成片名）全部失配，54 条又变 manual。重排是幂等的（再跑 --dry 是 renamed=0），已把重排后的名字提交（commit `e044654`）；**以后凡是成片改名，必须同时重写闸门缓存**，否则发布会被静默卡住。
 - **同名双份**：`柳州肥姨妈大骨螺蛳粉-螺蛳粉甜品套餐-03.mov` 与同名 .mp4 共用闸门键会互相盖掉，mov 加 _dup_ 前缀出队（可逆），保留 mp4 进队列。
-- **品牌修正**：袁记云饺-火鸡辣酱云饺拌面-* 的 brand 由「三养」改为「袁记云饺」（AGENTS 规则 2 联名按开店方），写进 untime/auto-edit/brand_index.json。
+- **品牌修正**：袁记云饺-火鸡辣酱云饺拌面-* 的 brand 由「三养」改为「袁记云饺」（AGENTS 规则 2 联名按开店方），写进 runtime/auto-edit/brand_index.json。
 - **首发**：袁记云饺-火鸡辣酱云饺拌面-01.mp4，13:59 触发，标题「袁记云饺，谁懂这一口？」、话题 3 个；竖/横封面 horizontalEdits=1 正常；团购挂 【招牌热销】生鲜|玉米鲜肉饺/韭菜鲜肉饺二选一（门店 袁记云饺(目澜市场店)、17.9 元、佣金 0）；自主声明=AI生成、不同时发布；发布后核实 status=审核中，成片已移入 已发成片，state.history 记一条。
 - **今日本机计划**：13:59 published，剩 15:42 / 17:20 / 18:58 三段 pending；**本机尚未建 Windows 计划任务**，不装的话这三段不会自动触发。
+2026-11-14 本机（公司2）排期落地 + TY 69 条历史归档搬完（宝哥指令「今天剩下 3 条你接手发，照 TY 的节奏建一套，明天起都是你发、每天 8 条；TY 那 69 条历史归档搬到本机 已发成片，用豆包云盘转移」）：
+
+- **排期（免管理员实现）**：`Register-ScheduledTask` 与 `schtasks /create` 都报「拒绝访问」（本机进程未提权，`S-1-16-12288` 不在 token groups），Windows 计划任务建不了。改走「HKCU Run + 隐藏守护进程」：新增 `scripts/publish/scheduler_loop.ps1`，30 秒 tick，05:00–19:59 每 5 分钟起 `run_due.js`、06:12/06:42…19:12 每 30 分钟起 `prepare.js`、09:20 与 21:20 起 `stats_fetch.js`；一律用 `C:\Program Files\nodejs\node.exe` + `Start-Process -WindowStyle Hidden`，日志 `runtime/publish/logs/scheduler.log`。登录自启键 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\TuangouScheduler`（`powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "D:\@kaifa\tuangou\scripts\publish\scheduler_loop.ps1"`），当前进程 PID 7020 在跑，14:12 起 prepare、14:15/14:20/14:25/14:30 起 run_due 均按点触发。
+  - 与 TY 计划任务的差异：触发是「整 5 分钟网格」而不是 TY 的 06:00 起每 5 分钟（`run_due.js` 的 due 判定是「计划时刻 ≤ 现在」，所以 15:42 那段会在 15:45 tick 发出，最多晚 5 分钟）；守护进程依附用户登录会话，注销后不再触发（TY 的 Interactive 任务同样如此）；
+  - 不会双发：`run_due.js` 自带 `run.lock`，同时刻只有一个实例在跑，重复 tick 会被跳过。
+- **归档搬迁（豆包云盘通路）**：TY `素材库/已剪成片/已发` 共 70 个文件 869.3 MB。做法：TY 侧 `FileBatchUpload` 分 7 批上传 66 条（已在本机的 4 条不重复搬：`11月1日_28783052`、`古鲁特-烤肉自助-02`、`好想来-99代100-01`、`库迪-OATLY燕麦奶真南瓜咖啡-01`），拿到 `https://aka.doubaocdn.com/s/xxxxx` 短链后在本机 `curl --parallel --parallel-max 6` 并发下载进 `素材库/已剪成片/已发成片`；清单（文件名 + 字节数 + 短链）落 `runtime/archive_transfer/manifest.json`，逐条结果 `runtime/archive_transfer/download.log`。
+  - 校验：67 条（66 条 + 先前测试 1 条）逐条字节数与 TY 完全一致（mismatch=0）；另抽 3 条（`coco都可： 33.mp4`、`肯德基-待确认-01.mp4`、`德庄火锅-单人餐畅吃-02.mp4`）SHA256 与 TY 侧比对一致，`11月1日_28783052.mp4` SHA256=`84D438280F0F2684726E4B3D8F1F474E0380054FC208A478DDBBA9D994992A3C` 也一致。本机 `已发成片` 现 71 个文件 / 878.4 MB。
+  - 经验：豆包云盘短链有效期未知，实测同批短链 40 分钟内可重复下载；批量搬迁要**即传即下**，别攒一天。单路 curl 约 2 MB/s、6 路并发约 25–30 MB/s，834 MB 用时约 12 分钟。
+  - TY 侧 `已发` 未删（默认只搬不删，等宝哥定去留）。
+- **供给风险（待宝哥定）**：本机 `D:\@kaifa\tuangou\素材库\未剪素材` 目录不存在，`prepare.js` 每轮只打印 `no source clips left`，自动剪辑补不了货；队列 53 条，按 8 条/天约 6–7 天见底。要继续自动发，需要把源素材放进 `素材库/未剪素材`（脚本按 AGENTS 规则 6 只吃项目内素材，百度盘线 `D:\BaiduSyncdisk\@同步\团购` 不并入）。
