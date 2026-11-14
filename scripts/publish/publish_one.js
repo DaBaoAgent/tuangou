@@ -165,35 +165,78 @@ async function setCovers(page) {
   return { ok: !missing, missing, horizontalEdits };
 }
 
+// 品牌名里常带品类后缀（茶芭蕾新疆酸奶 / 某某烤肉自助），而 POI 门店名只写品牌主词。
+// 2026-11-14 实跑：茶芭蕾新疆酸奶-待确认-03 整串搜出 12 个候选、无一含品牌串 → 挂不上门店 → PUBLISH_FAIL location-missing。
+// 这里给出「品牌整串 → 去括号 → 去品类后缀」的搜索词序列，逐个试；只有门店名包含当前搜索词才选，绝不乱选。
+const CATEGORY_SUFFIXES = ['新疆酸奶', '新疆奶茶', '鲜奶茶', '鲜果茶', '奶茶', '酸奶', '茶饮', '果茶', '咖啡', '美式', '拿铁', '火锅', '烤肉', '自助', '炸鸡', '鸡排', '汉堡', '螺蛳粉', '米线', '麻辣烫', '串串', '甜品', '蛋糕', '烘焙', '零食', '食品', '饮品', '水饺', '饺子', '拌面', '套餐', '代金券'];
+function brandKeywords(brand) {
+  const raw = String(brand || '').trim();
+  if (!raw) return [];
+  const out = [raw];
+  const noParen = raw.replace(/（[^）]*）|\([^)]*\)|\[[^\]]*\]/g, '').trim();
+  if (noParen && !out.includes(noParen)) out.push(noParen);
+  let core = noParen || raw;
+  const sorted = CATEGORY_SUFFIXES.slice().sort((a, b) => b.length - a.length);
+  for (const suf of sorted) {
+    if (core.length > suf.length && core.endsWith(suf)) {
+      core = core.slice(0, core.length - suf.length).trim();
+      break;
+    }
+  }
+  if (core.length >= 3 && !out.includes(core)) out.push(core);
+  return out.filter(k => k.length >= 2);
+}
+
+async function searchStoreOptions(page, keyword) {
+  const input = page.locator('.semi-select-open input').first();
+  if (!(await input.count())) return null;
+  await input.click();
+  await input.fill('').catch(() => {});
+  await page.keyboard.type(keyword, { delay: 60 });
+  await page.waitForTimeout(2600);
+  return page.evaluate(() => [...document.querySelectorAll('.semi-select-option')]
+    .map((el, i) => ({ i, text: el.innerText.trim() }))
+    .filter(o => o.text));
+}
+
 async function setLocation(page, brand) {
   if (!brand) return { ok: false, reason: 'no-brand' };
   const trigger = page.locator('text=输入地理位置').first();
   if (!(await trigger.count())) return { ok: false, reason: 'no-location-input' };
-  await trigger.click();
-  await page.waitForTimeout(1200);
-  const input = page.locator('.semi-select-open input').first();
-  if (!(await input.count())) return { ok: false, reason: 'no-search-input' };
-  await input.click();
-  await page.keyboard.type(brand, { delay: 60 });
-  await page.waitForTimeout(2600);
-
-  const options = await page.evaluate(() => [...document.querySelectorAll('.semi-select-option')]
-    .map((el, i) => ({ i, text: el.innerText.trim() }))
-    .filter(o => o.text));
-  if (!options.length) return { ok: false, reason: 'no-options' };
-  // 只选品牌匹配的门店；没有匹配就不挂位置，绝不选不相关门店
-  const matched = options.filter(o => o.text.includes(brand));
-  if (!matched.length) {
+  const keywords = brandKeywords(brand);
+  let lastCandidates = 0;
+  for (let k = 0; k < keywords.length; k++) {
+    const kw = keywords[k];
+    if (k === 0) {
+      await trigger.click();
+    } else {
+      await trigger.click().catch(() => {});
+    }
+    await page.waitForTimeout(1200);
+    const options = await searchStoreOptions(page, kw);
+    if (options === null) return { ok: false, reason: 'no-search-input' };
+    if (!options.length) {
+      await page.keyboard.press('Escape').catch(() => {});
+      continue;
+    }
+    lastCandidates = options.length;
+    // 只选门店名包含当前搜索词的；没有匹配就换下一个搜索词，绝不选不相关门店
+    const matched = options.filter(o => o.text.includes(kw));
+    if (!matched.length) {
+      await page.keyboard.press('Escape').catch(() => {});
+      continue;
+    }
+    const pick = matched.find(o => o.text.includes('商品')) || matched[0];
+    const target = page.locator('.semi-select-option').nth(pick.i);
+    await target.click({ force: true });
+    await page.waitForTimeout(1200);
+    const selectedText = pick.text.split('\n')[0];
+    const body = await page.locator('body').innerText();
+    const ok = body.includes(selectedText);
+    if (ok) return { ok, selected: selectedText, candidates: options.length, keyword: kw };
     await page.keyboard.press('Escape').catch(() => {});
-    return { ok: false, reason: 'no-matching-store', candidates: options.length };
   }
-  const pick = matched.find(o => o.text.includes('商品')) || matched[0];
-  const target = page.locator('.semi-select-option').nth(pick.i);
-  await target.click({ force: true });
-  await page.waitForTimeout(1200);
-  const selectedText = pick.text.split('\n')[0];
-  const body = await page.locator('body').innerText();
-  return { ok: body.includes(selectedText), selected: selectedText, candidates: options.length };
+  return { ok: false, reason: 'no-matching-store', candidates: lastCandidates, tried: keywords };
 }
 
 // 挂团购商品（2026-11-10）：位置 → 团购 → 请选择团购商品 → 输品牌过滤 → 选最合适的一条。
@@ -580,7 +623,7 @@ async function publishOne(videoInfo, copy, opts = {}) {
   }
 }
 
-module.exports = { publishOne, ensureNotSimultaneous, verifyBeforePublish, clickByTextIn, waitUploadComplete, fillCopy, setCovers, setLocation, setProduct, setDeclaration, liveSyncChecked };
+module.exports = { publishOne, ensureNotSimultaneous, verifyBeforePublish, clickByTextIn, waitUploadComplete, fillCopy, setCovers, setLocation, setProduct, setDeclaration, liveSyncChecked, brandKeywords };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
