@@ -170,3 +170,14 @@
   1. 队列 59 条在字幕闸门里全是 `manual`（本机缺 `runtime/auto-edit/brand_index.json`、`work/`、`subtitle_audit.json`），`run_due.js --dry-run` 输出 `checked=0 cached=0 moved=0 manual=59`，调度器选不出下一条 —— 需要补审计缓存/校对稿或定放行口径，否则自动发布是空转。
   2. 队列 `袁记云饺-火鸡辣酱云饺拌面-01~04` 的 brand 被识别成「三养」，与 AGENTS 规则 2（联名按开店方）冲突，本机缺 `brand_overrides`。
 - **待宝哥定**：① 接管后发哪一批（Z 盘新剪 44 条按规则 6 不入队，队列是项目线 59 条）；② TY 那边继续发的部分与本机如何不撞车；③ 首次真实发布仍需明确批准。
+
+2026-11-14 本机（公司2）正式接手发布，第一条已发出（宝哥指令「本机队列在 TY 已全过，一起放行；TY 停止发布和所有进程，你这边接手发布第一条」）：
+
+- **TY 停机**（client:582478:1581572652542794）：Disable-ScheduledTask TuangouPrepare/TuangouPublish/TuangouStats → 三个任务全 Disabled；untime/publish/state.json 置 `paused=true`（reason=交接给公司2），un_due.js 第 161 行早退生效；复查无 tuangou 相关 node/chrome/wscript 进程。TY 今日实发 4 条（08:58 古鲁特-烤肉自助-01、10:31 好想来-99代100-01、11:58 库迪-OATLY燕麦奶真南瓜咖啡-01、13:22 古鲁特-烤肉自助-02），原 8 条计划剩 14:44/16:06/17:29/18:50 四段。
+- **已发成片归档**：TY 今日已发的 3 条 + 本机首发的 1 条都在 `素材库/已剪成片/已发成片`（该目录即原 `已发`，宝哥口述名；config.paths.published_dir 已改为 `素材库/已剪成片/已发成片`，commit `646ddfb`），TY 那 69 条历史归档仍在 TY 的 `已发` 里未搬。
+- **字幕闸门放行**：本机缺 meta/审计缓存时 59 条全 manual。按宝哥口径写缓存（untime/publish/subtitle_audit.json，status:"ok"，reason=「本机队列已在 TY 侧复核通过，合并放行」），复核 `cached=54 manual=0 failed=0`。
+- **一个坑**：un_due.js 开头的 enameAll 会用 ename_final.js 按现行序号重排成片名，重排后闸门缓存键（=去扩展名的成片名）全部失配，54 条又变 manual。重排是幂等的（再跑 --dry 是 enamed=0），已把重排后的名字提交（commit `e044654`）；**以后凡是成片改名，必须同时重写闸门缓存**，否则发布会被静默卡住。
+- **同名双份**：`柳州肥姨妈大骨螺蛳粉-螺蛳粉甜品套餐-03.mov` 与同名 .mp4 共用闸门键会互相盖掉，mov 加 _dup_ 前缀出队（可逆），保留 mp4 进队列。
+- **品牌修正**：袁记云饺-火鸡辣酱云饺拌面-* 的 brand 由「三养」改为「袁记云饺」（AGENTS 规则 2 联名按开店方），写进 untime/auto-edit/brand_index.json。
+- **首发**：袁记云饺-火鸡辣酱云饺拌面-01.mp4，13:59 触发，标题「袁记云饺，谁懂这一口？」、话题 3 个；竖/横封面 horizontalEdits=1 正常；团购挂 【招牌热销】生鲜|玉米鲜肉饺/韭菜鲜肉饺二选一（门店 袁记云饺(目澜市场店)、17.9 元、佣金 0）；自主声明=AI生成、不同时发布；发布后核实 status=审核中，成片已移入 已发成片，state.history 记一条。
+- **今日本机计划**：13:59 published，剩 15:42 / 17:20 / 18:58 三段 pending；**本机尚未建 Windows 计划任务**，不装的话这三段不会自动触发。
