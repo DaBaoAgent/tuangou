@@ -998,8 +998,12 @@ def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx
         if y1 - y0 < 8:
             continue
         en = f"between(t,{b['t0']:.2f},{b['t1']:.2f})"
+        # boxblur 的色度半径有上限（取决于裁剪带的色度平面大小，带越窄上限越小），
+        # 只写 luma 半径时色度会沿用同一个值，26 会把整条渲染直接打挂（-22 Invalid argument）。
+        # 字幕是灰白字，模糊主要靠亮度平面，色度按带宽给一个保守值即可。
+        chr_r = max(1, min(blur, (y1 - y0) // 4 - 2))
         fc.append(f"{cur}split=2[cv{i}a][cv{i}b]")
-        fc.append(f"[cv{i}b]crop={W}:{y1 - y0}:0:{y0},boxblur={blur}:3[cv{i}blur]")
+        fc.append(f"[cv{i}b]crop={W}:{y1 - y0}:0:{y0},boxblur={blur}:3:{chr_r}:2[cv{i}blur]")
         fc.append(f"[cv{i}a][cv{i}blur]overlay=0:{y0}:enable='{en}'[cv{i}o]")
         cur = f"[cv{i}o]"
     # 2026-11-11：开头 1.5 秒轻微推近 + 缓慢回中，给首帧一点运动感（2 秒跳出 62%）。
