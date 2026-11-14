@@ -200,3 +200,11 @@
 - **删除结果**：278 个视频逐个解析绝对路径、校验全部落在 `D:\@kaifa\tuangou\素材库` 内再 `Remove-Item -LiteralPath`；deleted=278、failed=0、越界拒绝=0；复查 `afterVideos=0`。TY 侧目录结构保留（`已剪成片\已发`、`旧版-20261111`、`未剪素材\已剪` 等空目录）。
 - **未动**：`素材库` 里 15 个非视频文件（`女孩\` 9 张微信图片、`爷爷不泡茶\柿子\` 4 张图 + `柿柿可利-提示词1.txt`）。宝哥这次口径只讲视频，未删；要清再指示。
 - **踩坑（curl 配置）**：`--config` 文件里 `output = "D:\..."` 的反斜杠被 curl 当转义吞掉，文件会落到工作目录、`D:` 变成 `@kaifa_...`；首个请求又正好是 302，只写了 2 字节空壳（已删掉 83 个空壳）。正确写法：`output` 用正斜杠，并务必加 `-L` 跟 302。
+2026-11-14 17:20 档失败与修复（本机自动发布）：
+
+- **失败**：17:20 档 `茶芭蕾新疆酸奶-待确认-03.mp4` 连续两次 `PUBLISH_FAIL ... location-missing`。日志：`product {"ok":false,"reason":"no-matching-product"}`、`location {"ok":false,"reason":"no-matching-store","candidates":12}`、`precheck hasLocation:false` → 被 add_location 拦截不点发布（不是上传/封面/文案问题）。
+- **根因**：`publish_one.js#setLocation` 把**品牌整串**（「茶芭蕾新疆酸奶」）输进 POI 搜索，而抖音门店名是「茶芭蕾·新疆酸奶(十全街店)」这类带分隔符的写法，12 个候选里没有一个包含整串 → 判定不匹配。
+- **修复（commit `c70e02c`）**：新增 `brandKeywords()` —— 搜索词序列 = 品牌整串 → 去括号 → 去品类后缀（新疆酸奶/酸奶/奶茶/咖啡/火锅/烤肉/自助/炸鸡/鸡排/螺蛳粉/拌面…，后缀表按长度降序匹配，去完须≥3 字）。`setLocation` 逐个试，仍要求门店名包含当前搜索词才选，绝不乱选；整串能命中时行为和原来完全一致（已发布成功的老片不受影响）。`brandKeywords` 已导出，可直接用 node 单测（茶芭蕾新疆酸奶 → ["茶芭蕾新疆酸奶","茶芭蕾"]）。
+- **补发**：把 plan 里 17:20 那条 `failed` 退回 `pending`（记 `reopen_reason`），手动跑 `run_due.js` 补发。结果：`location {"ok":true,"selected":"茶芭蕾·新疆酸奶(十全街店)","keyword":"茶芭蕾"}`、precheck 六项全 true、`verified found=true status=审核中`、`PUBLISH_OK`，成片移入 `已发成片`。
+- **今日实发 3 条**：13:59 袁记云饺-01、15:42 煲珠公-待确认-04、17:20（补发至 17:35）茶芭蕾新疆酸奶-待确认-03；18:58 一档仍 pending。今日 target=8 未达成（早段由 TY 实发 4 条，本机接管后按剩余槽位走）。
+- **队列**：53 条可发；`已发成片` 73 个。
