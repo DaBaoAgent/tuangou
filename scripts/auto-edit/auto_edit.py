@@ -471,8 +471,11 @@ def cover_centered_margin_v(cfg, cover_bars):
     if not mids:
         return int(cfg["subtitle"]["margin_v"])
     mid = sum(mids) / len(mids)
-    # Alignment=2：字底距底边 = margin_v；视觉中心约在字底上方 0.55*字号
-    mv = int(round(H - mid - fs * 0.55))
+    # Alignment=2：行盒底边距底边 = margin_v；字幕着墨行的视觉中心在行盒底上方 k*字号。
+    # k 由实测得出（Noto Sans SC Bold、字号 112、1080x1920：着墨 y=1485-1555，行盒底 1572，
+    # 视觉中心距行盒底 52px ≈ 0.46*字号），默认 0.46；老批次可用 subtitle.cover_ink_center 覆盖。
+    ink_k = float(cfg["subtitle"].get("cover_ink_center", 0.46))
+    mv = int(round(H - mid - fs * ink_k))
     return max(60, min(H // 2, mv))
 
 
@@ -1000,9 +1003,12 @@ def render(cfg, video, workdir, ass_rel, bgm, dur, out_path, fx_frames=None, sfx
         fc.append(f"[cv{i}a][cv{i}blur]overlay=0:{y0}:enable='{en}'[cv{i}o]")
         cur = f"[cv{i}o]"
     # 2026-11-11：开头 1.5 秒轻微推近 + 缓慢回中，给首帧一点运动感（2 秒跳出 62%）。
-    # 放在所有 overlay 之后、ass 之前：自带字幕的模糊条会跟着一起缩放，坐标不会错位。
+    # 2026-11-14：cover 模式下一律不推近——推近锚点在 y=0，(punch-1) 的位移会把遮盖条
+    # 从静止的重打字幕上推开（实测 8% 时偏移约 115px），模糊条位置也就盖不住原字幕。
     hook_cfg = cfg.get("hook") or {}
     punch = float(hook_cfg.get("punch_in", 1.0) or 1.0)
+    if cover_bars and punch > 1.001:
+        punch = 1.0
     if hook_cfg.get("enabled", False) and punch > 1.001:
         hd = max(0.2, float(hook_cfg.get("duration", 1.5)))
         fc.append(
@@ -1223,6 +1229,11 @@ def process_clip(cfg, clip, args):
     cover_bars = legacy if (legacy and sub_mode == "cover") else []
     if cover_bars:
         log(f"按 cover 模式遮盖自带字幕并重打（{len(cover_bars)} 段）")
+        # 2026-11-14：片头推近会给整帧带来 (punch-1) 的位移（锚点在 y=0），
+        # 而重打的字幕是静止的，遮盖条会被推出字幕位置。cover 模式下一律关掉推近。
+        hook_cfg = cfg.get("hook") or {}
+        if hook_cfg.get("enabled", False) and float(hook_cfg.get("punch_in", 1.0) or 1.0) > 1.001:
+            log("cover 模式跳过片头推近：静态字幕无法跟随整帧位移")
 
     lines = []
     asr = []

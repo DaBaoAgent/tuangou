@@ -38,7 +38,8 @@
     "margin_v": 552,
     "fill": "FFFFFF",
     "outline_color": "000000",
-    "skip_if_legacy": true
+    "skip_if_legacy": true,
+    "cover_ink_center": 0.46
   },
   "hook": {
     "enabled": true,
@@ -103,7 +104,10 @@
     "min_height_720": 24,
     "max_height_720": 110,
     "pad": 9,
-    "color": "black"
+    "color": "black",
+    "mode": "cover",
+    "cover_pad": 10,
+    "cover_blur": 26
   },
   "brand_ocr": {
     "enabled": true,
