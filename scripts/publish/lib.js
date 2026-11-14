@@ -237,12 +237,38 @@ function ensurePlan(dateStr, opts = {}) {
   return plan;
 }
 
+// 来源黑名单（2026-11-14）：runtime/publish/source_blacklist.json。
+// 「田」是另一个号专用素材目录，其原片与项目素材库存在同文件双份（SHA256 全等），
+// 两线各剪一版会把另一号已发内容在本号重发，故双线都拒收（见 AGENTS 规则 8）。
+const BLACKLIST_PATH = path.join(ROOT, 'scripts/publish/source_blacklist.json');
+const BLACKLIST_RUNTIME_PATH = path.join(CONFIG.paths.work_dir || path.join(ROOT, 'runtime/publish'), 'source_blacklist.json');
+function loadSourceBlacklist() {
+  const b = readJson(BLACKLIST_PATH, null) || readJson(BLACKLIST_RUNTIME_PATH, {});
+  return b && typeof b === 'object' ? b : {};
+}
+function blockedVideoNames() {
+  const b = loadSourceBlacklist();
+  return new Set(Array.isArray(b.video_names) ? b.video_names : []);
+}
+function isBlockedSource(file) {
+  const b = loadSourceBlacklist();
+  const norm = String(file || '').replace(/\\/g, '/');
+  const base = path.basename(String(file || ''));
+  const prefixes = (Array.isArray(b.source_path_prefixes) ? b.source_path_prefixes : [])
+    .map(x => String(x || '').replace(/\\/g, '/'));
+  if (prefixes.some(p => p && norm.startsWith(p))) return true;
+  const pats = Array.isArray(b.source_name_patterns) ? b.source_name_patterns : [];
+  return pats.some(p => { try { return new RegExp(p).test(base); } catch { return false; } });
+}
+
 function listVideos(dir = CONFIG.paths.video_dir) {
   if (!fs.existsSync(dir)) return [];
   const stableMs = 2 * 60 * 1000;
+  const blocked = blockedVideoNames();
   return fs.readdirSync(dir)
     .filter(f => /\.(mp4|mov|mkv)$/i.test(f))
     .filter(f => !f.startsWith('_') && !f.startsWith('审核样片'))
+    .filter(f => !blocked.has(f))
     .map(f => path.join(dir, f))
     // 跳过仍在写入的成片：auto_edit 直接渲染到最终路径，未完成时文件已存在
     .filter(p => { try { return Date.now() - fs.statSync(p).mtimeMs > stableMs; } catch { return false; } });
@@ -881,6 +907,7 @@ module.exports = {
   loadState, saveState, loadPlan, savePlan, ensurePlan, targetCount, buildTimes, planTimes, buildTimesProfiled,
   brandUsage, publishedAtMs,
   inspectVideos, pickVideo, buildCopy, copyClean, seededRandom,
+  listVideos, loadSourceBlacklist, isBlockedSource,
   brandConfirmed, quarantineUnconfirmed,
   isPidAlive, resolvePython, chromiumPath, renameAll,
   brandFromFilename, auditLegacyNoMeta,

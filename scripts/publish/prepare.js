@@ -37,6 +37,13 @@ function sourceClips() {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
     .filter(f => /\.(mp4|mov|mkv)$/i.test(f))
+    .filter(f => {
+      const full = path.join(dir, f);
+      try {
+        if (L.isBlockedSource(full)) { log(`skip source (blacklist): ${f}`); return false; }
+      } catch { /* 黑名单读取失败不阻断 */ }
+      return true;
+    })
     .map(f => path.join(dir, f))
     .sort((a, b) => { try { return fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs; } catch { return 0; } });
 }
