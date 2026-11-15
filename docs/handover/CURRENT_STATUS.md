@@ -248,3 +248,7 @@
 - **选品修复**：新增 `scripts/publish/brand_product_hints.json`（`好想来` → 代金券 / 99买100 / 100元代金券）。`product_pick#decideProduct` 支持 `hintTerms`：文案没指定商品时只认主推词，一条不命中返回 `brand-hint-miss` 并不挂商品；`publish_one#setProduct` 用主推词先搜、再品牌兜底搜索。`零食/零食店/便利店/超市` 归入泛词表。
 - **测试**：新增 `copy_title.test.js` 4 例（未认证品牌带品牌名、缺 meta 兜底、标题前后不重复、未认证不挂品牌话题）；`product_pick.test.js` 补 2 例（好想来只认代金券、无代金券卡片时 `brand-hint-miss`）。全套 `scripts/publish/*.test.js` 仅 `product_attach.test.js` 失败，且**在 HEAD 原版代码上同样失败**（playwright 夹具环境问题，与本次改动无关，已知遗留）。
 - **口径澄清**：plan 里 `location: skipped` + precheck `hasLocation: true` 属正常——挂上商品后位置随商品走，位置模块按设计跳过，门店并没有漏挂（宝哥 11-15 确认今天 4 条都挂上了）。
+2026-11-15 固化
+
+- AGENTS.md 规则 5 加子条「品牌主推单品」（`scripts/publish/brand_product_hints.json`，命中不了就 `brand-hint-miss` 不挂商品）；新增规则 9「文案标题必须带品牌、不许自我重复」（未认证品牌只挡话题不丢品牌名、缺 meta 按文件名兜底、主体与后缀不许重复、泛词不当主体，出问题自己修）。
+- 回归基线：`copy_title.test.js`（4 例）、`product_pick.test.js`（13 例，含好想来代金券 2 例）、`run_due.test.js`（14 例）、`publish.test.js` 全通过；`product_attach.test.js` 为 playwright 夹具的历史遗留失败（HEAD 原版同样失败），与代码逻辑无关。
