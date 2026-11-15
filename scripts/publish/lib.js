@@ -735,7 +735,10 @@ function joinSmart(lines) {
 
 function buildCopy(videoInfo, state) {
   const rnd = seededRandom(`copy:${videoInfo.file}`);
-  const brand = videoInfo.brand || '';
+  // 2026-11-15（宝哥要求）：未认证品牌只是不挂品牌话题（videoInfo.brand_topic === false），
+  // 品牌名不许从标题/描述里丢掉；缺 meta 的成片按文件名兜底识别品牌。
+  const filenameBrand = brandFromFilename(videoInfo.file || '');
+  const brand = videoInfo.brand || (filenameBrand && filenameBrand.name) || '';
   const lines = mergeProductSplits(
     cleanLines(videoInfo.lines || []),
     [...FOOD_VOCAB, videoInfo.product].filter(Boolean),
@@ -759,13 +762,27 @@ function buildCopy(videoInfo, state) {
   const good = candidates.filter(c => TITLE_GOOD.test(c));
   const pool = preferred.length ? preferred : good;
   const shortProduct = product && product.length > 12 ? topicWord(product) : product;
-  const fallbackHook = (shortProduct && shortProduct.length >= 4) ? shortProduct : (brand || '这一口');
+  // 泛词（零食/套餐/美食/代金券…）不能当标题主体，否则会出现「零食，谁懂这一口？」这类空标题
+  const GENERIC_HOOK = /^(零食|美食|套餐|代金券|团购|饮品|小吃|待确认)$/;
+  const usableProduct = shortProduct && shortProduct.length >= 4 && !GENERIC_HOOK.test(shortProduct) ? shortProduct : '';
+  const fallbackHook = usableProduct || brand || '这一口';
   const hook = pool.length ? pool[Math.floor(rnd() * pool.length)] : fallbackHook;
   const suffixList = state.used_title_suffix || [];
-  let suffix = QUESTION_SUFFIX[Math.floor(rnd() * QUESTION_SUFFIX.length)];
+  // 2026-11-15（宝哥要求）：后缀不能和主体重复（曾出现「这一口，谁懂这一口？」）
+  const hookCore = String(hook || '').replace(/[？?，,。！!\s]/g, '');
+  const suffixPool = QUESTION_SUFFIX.filter(s => {
+    const core = s.replace(/[？?，,。！!]/g, '');
+    if (!core) return false;
+    if (hookCore && (hookCore.includes(core) || core.includes(hookCore))) return false;
+    return true;
+  });
+  const usableSuffix = suffixPool.length ? suffixPool : QUESTION_SUFFIX
+    .filter(s => !String(hook || '').includes(s.replace(/[？?]/g, '')));
+  const suffixBase = usableSuffix.length ? usableSuffix : QUESTION_SUFFIX;
+  let suffix = suffixBase[Math.floor(rnd() * suffixBase.length)];
   let guard = 0;
   while (suffixList.slice(-6).includes(suffix) && guard++ < 10) {
-    suffix = QUESTION_SUFFIX[Math.floor(rnd() * QUESTION_SUFFIX.length)];
+    suffix = suffixBase[Math.floor(rnd() * suffixBase.length)];
   }
   let title = `${hook}，${suffix}`;
   if (title.length > CONFIG.copy.max_title) title = title.slice(0, CONFIG.copy.max_title - 1) + '？';
@@ -788,8 +805,9 @@ function buildCopy(videoInfo, state) {
   if (desc.length > CONFIG.copy.max_desc) desc = desc.slice(0, CONFIG.copy.max_desc);
 
   // 话题：品牌 + 商品 + 品类 + 团购；不足 3 个补通用词
+  // 未认证品牌（brand_topic === false）不挂品牌话题，但标题/描述里的品牌名保留（宝哥 2026-11-15）
   const topics = [];
-  if (brand) topics.push(`#${topicWord(brand)}`);
+  if (brand && videoInfo.brand_topic !== false) topics.push(`#${topicWord(brand)}`);
   if (product) topics.push(`#${topicWord(product)}`);
   const catTag = { '炸鸡': '#炸鸡', '汉堡炸鸡': '#汉堡', '咖啡': '#咖啡', '茶饮': '#奶茶' }[category];
   if (catTag) topics.push(catTag);

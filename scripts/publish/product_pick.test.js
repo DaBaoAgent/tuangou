@@ -122,3 +122,25 @@ test('promoTitle：去掉价格、超长截到 10 字、空标题退回品牌名
   assert.equal(promoTitle({ title: '' }, '袁记云饺'), '袁记云饺');
   assert.equal(promoTitle({ title: '【限时】' }, '袁记云饺'), '袁记云饺');
 });
+
+// 2026-11-15（宝哥要求）：品牌有固定主推单品时（好想来 → 99 买 100 代金券），
+// 文案没指定商品也必须命中主推词，命中不了宁可不挂商品。
+test('品牌主推词：好想来未指定商品时只认代金券，不挂单支茶饮', () => {
+  const cards = [
+    { i: 0, text: CARD('【暖冬赏味季】好想来超值月光白茶525ml*3', '好想来品牌零食(桃源镇一店)', '6.6', '0') },
+    { i: 1, text: CARD('【限时】好想来 99买100元代金券 全场通用', '好想来品牌零食(桃源镇一店)', '99', '0') },
+  ];
+  const d = decideProduct(cards, '好想来', { product: '零食', hintTerms: ['代金券', '99买100', '100元代金券'] });
+  assert.equal(d.ok, true);
+  assert.equal(d.best.i, 1);
+  assert.match(d.best.matched_term, /代金券|99买100/);
+});
+
+test('品牌主推词：没有代金券卡片时返回 brand-hint-miss，不退回随便挑', () => {
+  const cards = [
+    { i: 0, text: CARD('【暖冬赏味季】好想来超值月光白茶525ml*3', '好想来品牌零食(桃源镇一店)', '6.6', '0') },
+  ];
+  const d = decideProduct(cards, '好想来', { product: '零食', hintTerms: ['代金券', '99买100'] });
+  assert.equal(d.ok, false);
+  assert.equal(d.reason, 'brand-hint-miss');
+});

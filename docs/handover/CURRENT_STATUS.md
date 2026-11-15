@@ -241,3 +241,10 @@
 - `柳州肥姨妈大骨螺蛳粉-螺蛳粉甜品套餐-03/04.mp4`、`笨姐就是火辣-双人餐-03/04.mp4` 是「拿成片当素材二次剪」的第三代画质（违反规则 6），移到 `素材库\隔离\成片当素材违规-20261114\`。
 - 4 条同时并入 `scripts/publish/source_blacklist.json#video_names` 并加 notes，防止后续重命名回队。
 - 队列可用成片 26 → **22 条**：华莱士 4、椿田熟成茶行 4、喜山奈 2、山中无老虎 2、柠檬森林 2、茉沏 2、鑫震源 2、真茶屋 2、库迪 1、好想来 1（10 个品牌，满足 ≥4 品牌要求）。按 8 条/天约 2.7 天见底。
+2026-11-15 标题/选品修复（宝哥：「好想来的标题和以后出问题的标题你都自己解决不用问我」「好想来应该挂 99 买 100 代金券」）
+
+- **标题丢品牌名根因**：`run_due.js` 对未认证品牌把 `brand` 置空再传给 `buildCopy`，品牌名连标题一起丢了，空品牌 + 泛商品词时回退成 `这一口`，于是出了「这一口，谁懂这一口？」。今天 11:54 好想来那条就是。
+- **修复三处**：① `buildCopy` 品牌取 `videoInfo.brand || brandFromFilename(file)`，缺 meta 也能按文件名识别；② 未认证品牌改为只挡话题（`brand_topic:false`），标题/描述照写品牌；③ 标题主体与后缀做去重（主体 3 字、后缀含「这一口」时自动换后缀），泛词（零食/套餐/美食/代金券…）不再当标题主体。
+- **选品修复**：新增 `scripts/publish/brand_product_hints.json`（`好想来` → 代金券 / 99买100 / 100元代金券）。`product_pick#decideProduct` 支持 `hintTerms`：文案没指定商品时只认主推词，一条不命中返回 `brand-hint-miss` 并不挂商品；`publish_one#setProduct` 用主推词先搜、再品牌兜底搜索。`零食/零食店/便利店/超市` 归入泛词表。
+- **测试**：新增 `copy_title.test.js` 4 例（未认证品牌带品牌名、缺 meta 兜底、标题前后不重复、未认证不挂品牌话题）；`product_pick.test.js` 补 2 例（好想来只认代金券、无代金券卡片时 `brand-hint-miss`）。全套 `scripts/publish/*.test.js` 仅 `product_attach.test.js` 失败，且**在 HEAD 原版代码上同样失败**（playwright 夹具环境问题，与本次改动无关，已知遗留）。
+- **口径澄清**：plan 里 `location: skipped` + precheck `hasLocation: true` 属正常——挂上商品后位置随商品走，位置模块按设计跳过，门店并没有漏挂（宝哥 11-15 确认今天 4 条都挂上了）。

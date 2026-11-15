@@ -241,8 +241,18 @@ async function setLocation(page, brand) {
 
 // 挂团购商品（2026-11-10）：位置 → 团购 → 请选择团购商品 → 输品牌过滤 → 选最合适的一条。
 // 商品挂上后位置自动跟商品走，不再单独挂门店；挂不上返回 ok:false，由调用方决定是否退回只挂门店。
+const PRODUCT_HINTS = (() => {
+  try { return L.readJson(path.join(__dirname, 'brand_product_hints.json'), {}) || {}; } catch { return {}; }
+})();
+const GENERIC_PRODUCT = /^(零食|美食|套餐|代金券|团购|饮品|小吃|待确认)$/;
 async function setProduct(page, { brand, product } = {}) {
   if (!brand) return { ok: false, reason: 'no-brand' };
+  // 2026-11-15（宝哥要求）：品牌有固定主推单品时（如 好想来 → 99 买 100 代金券），
+  // 文案没指定具体商品就按主推词搜，命中不了宁可不挂商品。
+  const hint = ((PRODUCT_HINTS.brands || {})[brand] || {});
+  const hintTerms = Array.isArray(hint.terms) ? hint.terms.slice() : [];
+  const productGeneric = !product || GENERIC_PRODUCT.test(String(product).trim());
+  const effectiveProduct = productGeneric ? null : product;
   // 标签行里的「位置」是类型下拉入口；直接点「输入地理位置」只会打开 POI 搜索面板，
   // 那里没有团购入口（2026-11-10 实跑发现，改成点标签 chip）
   // 标签行的类型下拉是一个 semi-select（文本显示「位置」）。2026-11-14 实跑发现
@@ -304,13 +314,14 @@ async function setProduct(page, { brand, product } = {}) {
     return readOptions();
   };
 
-  // 先用商品词搜（比按品牌搜准得多），搜不到再用品牌搜
-  let options = await typeTerm(product || brand);
-  let decision = decideProduct(options, brand, { product });
-  if (!decision.ok && product && product !== brand) {
-    const byBrand = await typeTerm(brand);
+  // 先用商品词搜（比按品牌搜准得多），搜不到再用品牌/主推词搜
+  const firstTerm = effectiveProduct || hintTerms[0] || brand;
+  let options = await typeTerm(firstTerm);
+  let decision = decideProduct(options, brand, { product: effectiveProduct, hintTerms });
+  if (!decision.ok && (effectiveProduct || hintTerms.length) && firstTerm !== brand) {
+    const byBrand = await typeTerm(hintTerms[0] || brand);
     if (byBrand.length > options.length) options = byBrand;
-    const d2 = decideProduct(options, brand, { product });
+    const d2 = decideProduct(options, brand, { product: effectiveProduct, hintTerms });
     if (d2.ok) decision = d2;
   }
   if (!options.length) return fail({ reason: 'no-product-options' });

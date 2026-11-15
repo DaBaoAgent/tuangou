@@ -260,9 +260,12 @@ async function main() {
     let picked = null;
     let skippedCopy = 0;
     for (const v of rhythm.kept) {
-      // 未认证品牌不挂品牌话题，但门店仍按识别出的品牌添加（宝哥 2026-11-02 要求）
+      // 未认证品牌不挂品牌话题，但门店仍按识别出的品牌添加（宝哥 2026-11-02 要求）；
+      // 2026-11-15 宝哥补充：品牌名不许从标题/描述里丢掉，只挡话题（brand_topic=false）。
       const brandUncertain = !v.brand_verified;
-      const publishVideo = brandUncertain ? { ...v, brand: null, locationBrand: v.brand } : v;
+      const publishVideo = brandUncertain
+        ? { ...v, brand_topic: false, locationBrand: v.brand }
+        : { ...v, locationBrand: v.brand };
       const copy = L.buildCopy(publishVideo, state);
       if (!L.copyClean(copy)) { skippedCopy++; log(`skip ${v.file}: copy quality low | ${copy.title}`); continue; }
       picked = { video: v, publishVideo, copy, brandUncertain };

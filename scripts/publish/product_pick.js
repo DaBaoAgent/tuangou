@@ -9,6 +9,8 @@ const GENERIC_PRODUCT_TERMS = new Set([
   '套餐', '单人', '双人', '多人', '单人餐', '双人餐', '代金券', '优惠券', '团购', '特惠', '爆款',
   '新品', '招牌', '单品', '饮品', '饮料', '小吃', '甜品', '主食', '组合', '超值', '必囤', '秒杀',
   '买一送一', '买一赠一', '进店顾客', '全国通用', '通用', '美食', '餐饮', '现制', '零售', '套餐组合',
+  // 2026-11-15：零食/便利店这类是品类不是商品，meta 里常直接写「零食」，按泛词处理
+  '零食', '零食店', '便利店', '超市',
 ]);
 
 function parseProductCard(text) {
@@ -81,8 +83,15 @@ function decideProduct(cards, brand, opts = {}) {
   if (!name) return { ok: false, reason: 'no-brand', best: null, terms: [], rejected: [], candidates: 0 };
   const exclude = opts.exclude || DEFAULT_EXCLUDE;
   const terms = productTerms(opts.product, name);
+  // 品牌级兜底（2026-11-15 宝哥要求）：文案没指定商品时，某些品牌的团购只认指定单品
+  // （如 好想来 只能挂「99 买 100 代金券」）。命中不了宁可不挂，也不挂错。
+  const generic = !terms.length;
+  const hints = generic && Array.isArray(opts.hintTerms)
+    ? opts.hintTerms.map(x => normalizeText(x)).filter(Boolean)
+    : [];
   const candidates = Array.isArray(cards) ? cards.length : 0;
   const rejected = [];
+  const hintMissed = [];
   let best = null;
   for (const c of cards || []) {
     const card = parseProductCard(c.text);
@@ -101,6 +110,15 @@ function decideProduct(cards, brand, opts = {}) {
       }
       if (!matchedTerm) {
         rejected.push({ i: c.i, title: card.title });
+        continue;
+      }
+    } else if (hints.length) {
+      for (const h of hints) {
+        if (!titleN.includes(h)) continue;
+        if (!matchedTerm || h.length > matchedTerm.length) matchedTerm = h;
+      }
+      if (!matchedTerm) {
+        hintMissed.push({ i: c.i, title: card.title });
         continue;
       }
     }
@@ -129,8 +147,8 @@ function decideProduct(cards, brand, opts = {}) {
   if (!best) {
     return {
       ok: false,
-      reason: terms.length ? 'product-mismatch' : 'no-matching-product',
-      best: null, terms, rejected, candidates,
+      reason: terms.length ? 'product-mismatch' : (hints.length && hintMissed.length ? 'brand-hint-miss' : 'no-matching-product'),
+      best: null, terms, rejected: rejected.concat(hintMissed), candidates,
     };
   }
   return { ok: true, reason: null, best, terms, rejected, candidates };
