@@ -258,3 +258,18 @@
 - **根因**：`lib.js#inspectVideos` 的 `product` 只取 `meta.brand.product`；缺 `meta.json` 的库存成片（56 条）虽然 `runtime/auto-edit/brand_index.json` 里有商品名（如 `喜山奈 → 金秋双人餐`），却没被使用 → `buildCopy` 返回 `product || brand` 时落到品牌名 → `decideProduct` 拿到「商品名=品牌名」→ 判为文案没指定商品 → 走品牌级挑选。
 - **修复**：`inspectVideos` 增加 `const fallbackProduct = brandIndex[clipKey]?.product || null;`，`product: meta.brand?.product || fallbackProduct || null`。修后剩余 5 条队列商品名已经正确（`华莱士-香酥翅尖小食-02 → 香酥翅尖小食`、`喜山奈-金秋双人餐-04 → 金秋双人餐`、`真茶屋 → 羽衣甘蓝白糯米`、`鑫震源 → 鑫动日常福利双人餐`）。
 - **说明**：已经发出的 3 条（喜山奈-03、鑫震源-03、华莱士-01）商品既定，改不回来；修后同类成片按规则 5 走文案商品硬闸门，列表里没有对应套餐就不挂商品、只挂门店。
+2026-11-17 团购代码画视频管线 P0（宝哥「直接进 P0」）
+
+- **新管线**：`D:\@kaifa\Auto-Video\daihuo\`（价签货架），纯代码绘制竖屏团购片。本机 Auto-Video `vendor/puppeteer-core` 缺失，改为复用 `tuangou/node_modules/playwright@1.55` + `ms-playwright/chromium-1243`，管线自带字体与代码音效，不依赖系统环境。
+- **出片**：`daihuo/projects/000_p0_smoke/out/华莱士-双拼6块-CV-01.mp4`——1080×1920 / 30fps / 450 帧 / 15.00s / h264 CRF18 / AAC 48k；−14.47 LUFS、TP −1.40；`_qa.json` 九项全绿（无黑帧、无 >0.5s 冻帧、首帧钩子色块 3.49%）。配音 8 句 85 字 12.68s（GPT-SoVITS v3 + dabao，speed 1.15、句间 140ms）。
+- **测试数据**：渲染 450 帧 34–36s（80ms/帧）；音频两遍 loudnorm（单遍会落到 −15）；`split_lines.py` 句级时间轴按字数比例取最近静音，误差 ≤0.1s。
+- **踩坑（已写进 README）**：① Playwright 默认找 `chromium_headless_shell-1187`（本机没有），必须显式 `executablePath`；② `-webkit-text-stroke` 会把汉字细笔吃空，改 8 方向 `text-shadow`；③ 只做入场动画会留 >0.5s 静止段，需「全场缓慢推近 + 背景光斑游走」才过 freezedetect；④ `dabao_tts.py` 每次调用重启服务，模型加载 60–90s，批量生产必须 `--keep-server`；⑤ 入场放大要设 `transform-origin` 左侧，否则首帧大价格会裁出画面。
+- **风险**：样片只放在 `daihuo/projects/`，**没有**进 `素材库/已剪成片`——进队列就会被 `run_due.js` 当成品发布。P3 接队列前必须先落「代码片标记 + AIGC 声明 + 营销信息标签」三者。
+- **交接**：复现命令与坑清单见 `Auto-Video/daihuo/README.md`；方案见 `docs/plan/团购代码画视频管线方案-20261116.md`。下一步 P1：`pipeline.json` / `SKILL.md`、catalog 追加 12 号工位 `local`、`validate.py` 过 0 error、道具库拆分。
+2026-11-17 接外线成片入队（宝哥："已剪成片里我放了一些你在Z盘剪辑的成片，放入发布队列吧"）
+
+- **现状**：宝哥把 Z 盘本地剪辑线的成片拷进 `素材库\已剪成片`，共 24 条（8 个品牌商品 × 05/06/07 三版：赣粉缘-拌粉套餐、古鲁特-单人烤肉自助、肯德基-买一送一主食、肯德基-十翅一桶、肯悦咖啡-黄油巴斯克风味美式、暖栗铺-糖炒栗子、蜀大侠-围炉聚饮6人餐、酸奶罐罐-小黄油柠檬酸奶昔）。
+- **闸门误伤**：这些片没有项目内 `meta.json`/校对稿，07:45 那轮字幕闸门判 `manual`（缺少字幕依据），按 24 小时 TTL 直接把它们移进了 `素材库\已剪成片\字幕待修复`，队列一度掉到 5 条。
+- **核对结果**：① 逐条 SHA256 对 `baidu44_fingerprint.csv`（TY 百度盘线＝另一个号用的 44 条）**0 命中**；② 对 `source_blacklist.json` 的 30 条成片名与 `^\d+月\d+日_` 源片名正则 **0 命中**；③ 与 `已发成片` 91 条无同名；④ 12 点抽帧 OCR 抽查（每条 6 点）24 条全部命中 3–6 点，确认确实烧录了字幕，不是 11-14 那种「字幕没打」的片子。
+- **改动**：`subtitle_gate.js` 新增人工放行名单支持——`scripts/publish/subtitle_approved.json` 按 `文件名 + mtime_ms + size` 三指纹登记，命中则缓存状态记 `approved`、`confirmed()` 认它，指纹变了自动失效；`confirmed()` 在没有缓存时也直接按名单+指纹判定，避免「刚登记完、闸门还没跑到」这段窗口被漏判。24 条已从 `字幕待修复` 移回队列，`auditInventory` 干跑：`approved=24, moved=0, manual=0`，`inspectVideos` 28 条全部 `confirmed`。
+- **规则**：AGENTS 新增规则 10（外线成片入队与字幕人工放行），明确 `Z:\暂时不用素材\团购` 除 `田` 之外可作为本地剪辑工作区，`田` 仍按规则 8 拒收。

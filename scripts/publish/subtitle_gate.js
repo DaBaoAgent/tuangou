@@ -14,6 +14,22 @@ const ROOT = L.ROOT;
 const CONFIG = L.CONFIG;
 const CACHE_PATH = CONFIG.paths.subtitle_audit_cache
   || path.join(CONFIG.paths.work_dir, 'subtitle_audit.json');
+// 人工放行名单（2026-11-17）：外部剪辑线（Z 盘）的成片项目里没有校对稿，闸门会判「缺字幕依据」并移进
+// 字幕待修复。这类片由宝哥人工看过并验收字幕，登记在 scripts/publish/subtitle_approved.json 放行；
+// 必须带 mtime+size 指纹，换片/重渲后指纹变了就自动失效，要重新审核。
+const APPROVED_PATH = path.join(__dirname, 'subtitle_approved.json');
+
+function loadApproved() {
+  const j = L.readJson(APPROVED_PATH, null);
+  return (j && j.clips && typeof j.clips === 'object') ? j.clips : {};
+}
+
+function approvedFor(clips, base, stat) {
+  const e = clips[base];
+  if (!e) return null;
+  if (Number(e.size) !== stat.size || Number(e.mtime_ms) !== Math.round(stat.mtimeMs)) return null;
+  return e;
+}
 // 审计用的 Python（A5，2026-11-08）：环境变量 → 通用媒体 venv → 剪辑用的 Python312 → PATH 里的 python，
 // 取第一个存在的；不再死绑另一个项目的 venv。
 // 候选链和"是否真能跑"由 lib 统一判断（A5）：环境变量 → 各大 venv → uv/常规安装 → PATH，
@@ -193,7 +209,8 @@ function auditInventory(opts = {}) {
   const cache = loadCache();
   const metas = workMetas();
   const brandIndex = L.readJson(CONFIG.paths.brand_index, {});
-  const result = { audited: 0, cached: 0, skipped: 0, manual: [], failed: [], unavailable: [], moved: [], deferred: 0 };
+  const approved = loadApproved();
+  const result = { audited: 0, cached: 0, skipped: 0, approved: 0, manual: [], failed: [], unavailable: [], moved: [], deferred: 0 };
   const startedAt = Date.now();
 
   for (const video of listTopVideos(videoDir)) {
@@ -203,6 +220,17 @@ function auditInventory(opts = {}) {
     const meta = hit ? hit.m : {};
     let stat;
     try { stat = fs.statSync(video); } catch { continue; }
+    // 人工放行名单优先：外部剪辑线成片没有项目校对稿，宝哥验收后按指纹登记放行
+    const app = approvedFor(approved, base, stat);
+    if (app) {
+      cache.clips[clipKey] = {
+        mtime_ms: stat.mtimeMs, size: stat.size, checked_at: new Date().toISOString(),
+        kind: 'approved', status: 'approved', ok: true,
+        reason: `人工放行：${app.approved_by || '宝哥'} ${app.approved_at || ''} ${app.note || ''}`.trim(),
+      };
+      result.approved++;
+      continue;
+    }
     const prev = cache.clips[clipKey];
     // unavailable 是临时故障，不信任缓存：下一轮重试，避免 OCR 恢复后成片被永久卡住
     if (prev && prev.status !== 'unavailable' && prev.mtime_ms === stat.mtimeMs && prev.size === stat.size) {
@@ -285,11 +313,17 @@ function auditInventory(opts = {}) {
 function confirmed(videoInfo) {
   if (!videoInfo || !videoInfo.clipKey) return false;
   const rec = loadCache().clips[videoInfo.clipKey];
-  if (!rec) return false;
-  return rec.ok === true && ['ok', 'skipped', 'legacy_ok'].includes(rec.status);
+  if (rec && rec.ok === true && ['ok', 'skipped', 'legacy_ok', 'approved'].includes(rec.status)) return true;
+  // 缓存还没落盘（比如刚登记放行、闸门还没跑到）时，直接按人工放行名单判定；指纹不匹配就不放行
+  try {
+    if (!videoInfo.path) return false;
+    const stat = fs.statSync(videoInfo.path);
+    if (approvedFor(loadApproved(), path.basename(videoInfo.path), stat)) return true;
+  } catch { /* 读不到文件就按未确认处理 */ }
+  return false;
 }
 
 module.exports = {
-  CACHE_PATH, enforceSinceMs, reviewDir,
-  loadCache, saveCache, expectedFor, bandFor, auditInventory, confirmed,
+  CACHE_PATH, APPROVED_PATH, enforceSinceMs, reviewDir,
+  loadCache, saveCache, expectedFor, bandFor, auditInventory, confirmed, loadApproved, approvedFor,
 };
