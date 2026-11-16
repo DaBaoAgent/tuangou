@@ -298,6 +298,9 @@ function inspectVideos() {
     const clipKey = hit ? hit.dir : base.replace(/\.[^.]+$/, '');
     const meta = hit ? hit.m : {};
     const fallbackBrand = brandIndex[clipKey]?.brand || null;
+    // 2026-11-15（宝哥要求「挂准」）：缺 meta 的成片，商品名也要从 brand_index 兜底取，
+    // 否则商品名退化成品牌名，按品牌级规则随便挑一款（喜山奈双人餐挂成四人宴就是这么来的）。
+    const fallbackProduct = brandIndex[clipKey]?.product || null;
     const metaBrand = typeof meta.brand === 'string' ? meta.brand : null;
     // B（2026-11-08 宝哥要求）：缺 meta 的成片，品牌按文件名确定性匹配，匹配不到才算没有
     const fileBrand = hit ? null : brandFromFilename(base);
@@ -319,7 +322,7 @@ function inspectVideos() {
       brand_confidence: Number(meta.brand?.confidence ?? brandIndex[clipKey]?.confidence) || (fileBrand ? 1 : 0),
       brand_source: meta.brand?.source || brandIndex[clipKey]?.source || (fileBrand ? 'filename' : null),
       // meta 里的商品/品类由画面字幕人工确认过，比 ASR 更可信，优先用于标题兜底
-      product: meta.brand?.product || null,
+      product: meta.brand?.product || fallbackProduct || null,
       category: BRANDS.brands.find(b => b.name === brand)?.category || meta.brand?.category || null,
       lines,
       copy_override: meta.copy_override || null,

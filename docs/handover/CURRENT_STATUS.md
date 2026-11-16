@@ -252,3 +252,9 @@
 
 - AGENTS.md 规则 5 加子条「品牌主推单品」（`scripts/publish/brand_product_hints.json`，命中不了就 `brand-hint-miss` 不挂商品）；新增规则 9「文案标题必须带品牌、不许自我重复」（未认证品牌只挡话题不丢品牌名、缺 meta 按文件名兜底、主体与后缀不许重复、泛词不当主体，出问题自己修）。
 - 回归基线：`copy_title.test.js`（4 例）、`product_pick.test.js`（13 例，含好想来代金券 2 例）、`run_due.test.js`（14 例）、`publish.test.js` 全通过；`product_attach.test.js` 为 playwright 夹具的历史遗留失败（HEAD 原版同样失败），与代码逻辑无关。
+2026-11-16 商品名兜底修复（宝哥 11-15「挂准」的延伸）
+
+- **现象**：今日 8 条里 `喜山奈-金秋双人餐-03` 挂成「寻味·四人宴」、`鑫震源-鑫动日常福利双人餐-03` 挂成「新品尝鲜单人餐」，都是套餐人数不符。plan 里 `product_expected` 记的是品牌名（喜山奈/鑫震源/华莱士），说明商品名在进入选品前就已经退化成品牌名。
+- **根因**：`lib.js#inspectVideos` 的 `product` 只取 `meta.brand.product`；缺 `meta.json` 的库存成片（56 条）虽然 `runtime/auto-edit/brand_index.json` 里有商品名（如 `喜山奈 → 金秋双人餐`），却没被使用 → `buildCopy` 返回 `product || brand` 时落到品牌名 → `decideProduct` 拿到「商品名=品牌名」→ 判为文案没指定商品 → 走品牌级挑选。
+- **修复**：`inspectVideos` 增加 `const fallbackProduct = brandIndex[clipKey]?.product || null;`，`product: meta.brand?.product || fallbackProduct || null`。修后剩余 5 条队列商品名已经正确（`华莱士-香酥翅尖小食-02 → 香酥翅尖小食`、`喜山奈-金秋双人餐-04 → 金秋双人餐`、`真茶屋 → 羽衣甘蓝白糯米`、`鑫震源 → 鑫动日常福利双人餐`）。
+- **说明**：已经发出的 3 条（喜山奈-03、鑫震源-03、华莱士-01）商品既定，改不回来；修后同类成片按规则 5 走文案商品硬闸门，列表里没有对应套餐就不挂商品、只挂门店。
