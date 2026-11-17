@@ -61,6 +61,12 @@ python scripts/auto-edit/settle_sync_baidu.py --batch-dir ... --apply
 `已剪素材`、把 `meta.output` 与 `brand_index.json` 同步指向实际路径。脚本会拒绝以项目发布
 队列为目标目录——百度盘线的成片**绝不复制进 `素材库/已剪成片`**，否则自动发布会误抓。
 
+**Z 线（`Z:\暂时不用素材\团购`，`田` 子目录除外，规则 10）** 是第三条本地工作区：源素材在
+同盘 `未剪素材`、成片进同盘 `已剪成片`（`品牌-商品-序号.mp4`）、源素材归档到 `未剪素材\已剪素材`，
+同样**不进项目发布队列**。批量流程（清单 → 草稿 → 校对稿 → 两路串行渲染 → 双坐标审计 → 归档）
+见 `scripts/auto-edit/z-line-sop.md`，配套脚本 `batch_manifest.py`（清单）、`render_batch.ps1`
+（批量渲染 worker）、`archive_sources.py`（归档，默认 dry-run）、`ocr_sub_lines.py`（字幕草稿）。
+
 
 ## 素材自带字幕
 
