@@ -1354,6 +1354,9 @@ def process_clip(cfg, clip, args):
     out_dir = Path(cfg["paths"]["output_dir"])
     if args.name:
         name = args.name
+    elif (cfg.get("naming") or {}).get("keep_source_name"):
+        # 宝哥要求：Z 线本地剪辑的成片保持原素材名，不加日期前缀（2026-11-17）
+        name = f"{stem}.mp4"
     else:
         # 同一天同品牌的多条素材前 8 个字相同，直接拼日期会互相覆盖；
         # 加源文件名指纹，保证唯一且可复现（--skip-existing 仍按同名判断）
