@@ -124,18 +124,34 @@ async function setCovers(page) {
   // 横封面：保存竖封面后弹窗关闭，页面会浮出提示「已基于竖封面为你生成横封面。效果不满意？独立编辑」。
   // 抖音自动生成的那张横封面，发文助手仍判「横封面缺失」，必须点「独立编辑」进横封面 tab 再保存一次。
   // 2026-11-14 实跑：此时「选择封面」按钮已消失，只能走「独立编辑」。
-  let horizontalEdits = 0;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const editLink = page.getByText('独立编辑', { exact: true }).first();
-    if (!(await editLink.count())) {
+  // 2026-11-17：08:37 那条保存竖封面后只等了 0.9s 没等到「独立编辑」入口（horizontalEdits=0），
+  // 直接被判 cover-missing 白跑一遍。改成轮询等入口（约 10s），等不到就用「选择封面」重开弹窗直接设横封面。
+  const waitForEntry = async (tries = 12) => {
+    for (let i = 0; i < tries; i++) {
+      const el = page.getByText('独立编辑', { exact: true }).first();
+      if (await el.count()) return el;
       await page.mouse.move(560, 470);
-      await page.waitForTimeout(900);
+      await page.waitForTimeout(800);
     }
-    const link = page.getByText('独立编辑', { exact: true }).first();
-    if (!(await link.count())) break;
+    return null;
+  };
+  let horizontalEdits = 0;
+  let link = await waitForEntry();
+  if (!link) {
+    const reopen = page.locator('text=选择封面').first();
+    if (await reopen.count()) {
+      await reopen.click({ force: true }).catch(() => {});
+      await page.waitForTimeout(2200);
+      if (await page.locator(dlgSelector).count()) {
+        await tabDone('设置横封面');
+        horizontalEdits += 1;
+      }
+    }
+  }
+  for (let attempt = 0; attempt < 3 && link; attempt++) {
     await link.click({ force: true }).catch(() => {});
     await page.waitForTimeout(2500);
-    if (!(await page.locator(dlgSelector).count())) break;
+    if (!(await page.locator(dlgSelector).count())) { link = null; break; }
     const htab = page.locator(dlgSelector).getByText('设置横封面', { exact: true }).first();
     if (await htab.count()) { await htab.click({ force: true }).catch(() => {}); await page.waitForTimeout(2200); }
     const done2 = page.locator(dlgSelector).getByText('完成', { exact: true }).first();
@@ -149,7 +165,8 @@ async function setCovers(page) {
       await page.waitForTimeout(1200);
     }
     const b0 = await page.locator('body').innerText();
-    if (!(/横封面缺失/.test(b0))) break;
+    if (!(/横封面缺失/.test(b0))) { link = null; break; }
+    link = await waitForEntry(6);
   }
   // 发文助手的检测结果会滞后，主动点一次「重新检测」再判
   const redetect = page.getByText('重新检测', { exact: true }).first();
@@ -220,20 +237,24 @@ async function setLocation(page, brand) {
       continue;
     }
     lastCandidates = options.length;
-    // 只选门店名包含当前搜索词的；没有匹配就换下一个搜索词，绝不选不相关门店
-    const matched = options.filter(o => o.text.includes(kw));
-    if (!matched.length) {
+    // 只选门店名包含当前搜索词的；没有匹配就换下一个搜索词，绝不选不相关门店。
+    // 2026-11-17：命中之后还要排序——带分店后缀的优先，品牌级 POI（名字就是「肯德基」）排最后，
+    // 避免像 08:37 那条一样把锚点挂到没有门店的品牌页上。
+    const pick = L.pickStoreOption(options, kw);
+    if (!pick) {
       await page.keyboard.press('Escape').catch(() => {});
       continue;
     }
-    const pick = matched.find(o => o.text.includes('商品')) || matched[0];
     const target = page.locator('.semi-select-option').nth(pick.i);
     await target.click({ force: true });
     await page.waitForTimeout(1200);
     const selectedText = pick.text.split('\n')[0];
     const body = await page.locator('body').innerText();
     const ok = body.includes(selectedText);
-    if (ok) return { ok, selected: selectedText, candidates: options.length, keyword: kw };
+    if (ok) {
+      if (pick.brand_poi) log(`location brand-level POI: ${selectedText}（列表里没有分店，锚点退化为品牌页）`);
+      return { ok, selected: selectedText, candidates: pick.candidates, keyword: kw, brand_poi: pick.brand_poi };
+    }
     await page.keyboard.press('Escape').catch(() => {});
   }
   return { ok: false, reason: 'no-matching-store', candidates: lastCandidates, tried: keywords };

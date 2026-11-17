@@ -107,6 +107,41 @@ test('硬性规则：卡片营销括号/规格与商品名规格都能归一化�
   assert.equal(d2.best.i, 1);
 });
 
+test('硬性规则：货架标题把差异词塞进括号/插修饰词时仍按商品名命中（2026-11-17 肯德基漏挂）', () => {
+  // 实跑：文案商品「买一送一主食」，货架只有「【买一送一】经典主食」→ 严格归一把括号内内容丢掉后判 miss，白丢一次挂载
+  const cards = [
+    { i: 0, text: CARD('【买一送一】经典主食', '肯德基(府前路店)', '39.8', '1') },
+    { i: 1, text: CARD('【买一送一】十翅一桶', '肯德基(府前路店)', '45', '1') },
+  ];
+  const d = decideProduct(cards, '肯德基', { product: '买一送一主食' });
+  assert.equal(d.ok, true);
+  assert.equal(d.best.i, 0);
+  assert.equal(d.best.matched_term, '买一送一主食');
+  assert.ok(d.best.match_level >= 2);
+  assert.equal(d.best.match_level === 1, false);
+});
+
+test('硬性规则：严格命中优先于宽松命中，不为「能挂上」挑长相像的', () => {
+  const cards = [
+    { i: 0, text: CARD('【买一送一】经典主食', '肯德基(府前路店)', '39.8', '1') },
+    { i: 1, text: CARD('买一送一主食', '肯德基(府前路店)', '39.8', '1') },
+  ];
+  const d = decideProduct(cards, '肯德基', { product: '买一送一主食' });
+  assert.equal(d.ok, true);
+  assert.equal(d.best.i, 1);
+  assert.equal(d.best.match_level, 1);
+});
+
+test('硬性规则：去修饰词后仍不相关就不挂（鑫动日常福利双人餐 ≠ 新品尝鲜单人餐）', () => {
+  const cards = [
+    { i: 0, text: CARD('【新品】尝鲜单人餐', '鑫震源(胜浦店)', '58', '2') },
+  ];
+  const d = decideProduct(cards, '鑫震源', { product: '鑫动日常福利双人餐' });
+  assert.equal(d.ok, false);
+  assert.equal(d.reason, 'product-mismatch');
+  assert.equal(d.rejected.length, 1);
+});
+
 test('promoTitle：去掉营销括号和泛品类前缀，保留商品名+规格', () => {
   assert.equal(
     promoTitle({ title: '【专属特惠】熟食·冬菇马蹄云饺2选1' }, '袁记云饺'),
@@ -143,4 +178,9 @@ test('品牌主推词：没有代金券卡片时返回 brand-hint-miss，不退�
   const d = decideProduct(cards, '好想来', { product: '零食', hintTerms: ['代金券', '99买100'] });
   assert.equal(d.ok, false);
   assert.equal(d.reason, 'brand-hint-miss');
+});
+test('promoTitle：去掉括号后只剩修饰词/泛词时，保留括号内差异词（买一送一主食）', () => {
+  assert.equal(promoTitle({ title: '【买一送一】经典主食' }, '肯德基'), '买一送一经典主食');
+  // 括号里是纯营销词、正文够清楚时仍按老规则丢掉括号
+  assert.equal(promoTitle({ title: '【专属特惠】熟食·冬菇马蹄云饺2选1' }, '袁记云饺'), '冬菇马蹄云饺2选1');
 });

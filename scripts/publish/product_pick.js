@@ -42,6 +42,52 @@ function normalizeText(s) {
     .toLowerCase();
 }
 
+// 宽松归一（2026-11-17）：严格归一会把括号内容整段丢掉，可括号里有时正是关键差异词
+// ——「【买一送一】经典主食」被归一成「经典主食」，视频文案写的「买一送一主食」就永远对不上。
+// 宽松归一保留括号内文字，只去掉括号符号本身；只用于匹配，展示与推广标题仍走严格归一。
+function normalizeTextLoose(s) {
+  return String(s || '')
+    .replace(/[【「〔\[（(】」〕\]）)]/g, ' ')
+    .replace(/￥\s*\d+(?:\.\d+)?/g, '')
+    .replace(/\d+(?:\.\d+)?\s*元/g, '')
+    .replace(/[\s·・、，,。；;：:！!？?/\\|+＋\-—_~`'"“”‘’*#@&%$^]+/g, '')
+    .toLowerCase();
+}
+
+// 货架标题里的修饰词（2026-11-17）：抖音商品卡常在商品主体前面插「经典/招牌/新品」这类词，
+// 「买一送一经典主食」对「买一送一主食」就差这两个字。匹配时去掉，展示不动。
+const TITLE_FILLERS = ['经典', '招牌', '特色', '人气', '热销', '爆款', '新品', '限定', '特惠', '专属', '升级版', '升级', '加量', '尊享', '精选', '正宗'];
+function stripFillers(s) {
+  let out = String(s || '');
+  for (const f of TITLE_FILLERS) out = out.split(f).join('');
+  return out;
+}
+
+// 三级命中（从严到宽）：1 严格归一包含 → 2 宽松归一包含（括号内差异词参与）→ 3 去修饰词后包含。
+// 命中等级会进打分：严格命中优先，绝不为了「能挂上」去挑一条只是长得像的商品。
+function matchProductTerm(title, terms) {
+  const strict = normalizeText(title);
+  const loose = normalizeTextLoose(title);
+  const looseFlat = stripFillers(loose);
+  let best = null;
+  for (const t of terms) {
+    const term = String(t || '');
+    if (!term) continue;
+    let level = 0;
+    if (strict.includes(term)) level = 1;
+    else if (loose.includes(term)) level = 2;
+    else {
+      const flatTerm = stripFillers(term);
+      if (flatTerm.length >= 3 && looseFlat.includes(flatTerm)) level = 3;
+    }
+    if (!level) continue;
+    if (!best || level < best.level || (level === best.level && term.length > best.term.length)) {
+      best = { term, level };
+    }
+  }
+  return best;
+}
+
 // 从「视频商品名」派生匹配词。
 // 规则（2026-11-11 宝哥定，硬性）：视频文案里写了什么商品，就只能挂那个商品的团购。
 // 商品名缺省、或商品名本身等于品牌名时算「文案没指定商品」，返回空词表走品牌级规则。
@@ -101,26 +147,24 @@ function decideProduct(cards, brand, opts = {}) {
     const titleHit = card.title.includes(name);
     if (!storeHit && !titleHit) continue;
 
-    const titleN = normalizeText(card.title);
     let matchedTerm = null;
+    let matchLevel = 0;
     if (terms.length) {
-      for (const t of terms) {
-        if (!titleN.includes(t)) continue;
-        if (!matchedTerm || t.length > matchedTerm.length) matchedTerm = t;
-      }
-      if (!matchedTerm) {
+      const m = matchProductTerm(card.title, terms);
+      if (!m) {
         rejected.push({ i: c.i, title: card.title });
         continue;
       }
+      matchedTerm = m.term;
+      matchLevel = m.level;
     } else if (hints.length) {
-      for (const h of hints) {
-        if (!titleN.includes(h)) continue;
-        if (!matchedTerm || h.length > matchedTerm.length) matchedTerm = h;
-      }
-      if (!matchedTerm) {
+      const m = matchProductTerm(card.title, hints);
+      if (!m) {
         hintMissed.push({ i: c.i, title: card.title });
         continue;
       }
+      matchedTerm = m.term;
+      matchLevel = m.level;
     }
 
     let score = 10; // 品牌匹配起步
@@ -131,7 +175,11 @@ function decideProduct(cards, brand, opts = {}) {
     // 2026-11-11 硬性规则：商品名命中者优先，命中词越长越优先（「莓果酸奶饮」>「莓果」）。
     if (matchedTerm) {
       score += 4 + Math.min(matchedTerm.length, 6) * 0.5;
+      // 命中等级加权：严格命中 > 括号内差异词命中 > 去修饰词后命中
+      if (matchLevel === 1) score += 1;
+      else if (matchLevel === 2) score += 0.5;
       why.push('productMatch:' + matchedTerm);
+      if (matchLevel > 1) why.push('matchL' + matchLevel);
     }
     for (const w of GOOD_WORDS) if (card.title.includes(w)) { score += 1.5; why.push(w); }
     if (CARD_RE.test(card.raw)) { score -= 3; why.push('card'); }
@@ -141,7 +189,7 @@ function decideProduct(cards, brand, opts = {}) {
     }
     if (opts.product && card.title.includes(String(opts.product))) { score += 2; why.push('productExact'); }
 
-    const entry = { i: c.i, ...card, matched_term: matchedTerm, score: Math.round(score * 10) / 10, why: why.join('+') };
+    const entry = { i: c.i, ...card, matched_term: matchedTerm, match_level: matchLevel, score: Math.round(score * 10) / 10, why: why.join('+') };
     if (!best || entry.score > best.score) best = entry;
   }
   if (!best) {
@@ -169,16 +217,33 @@ const GENERIC_SEG = /^(生鲜|熟食|冷冻|速食|预包装|成品|半成品|�
 // 推广标题（2026-11-10 新规）：平台限 10 字，要求尽量是「商品名称+规格」。
 // 去掉营销括号、价格和泛品类前缀后优先整体保留；仍超长就取最长的一段再截断。
 // 取不到有效内容时退回品牌名，保证抽屉里的输入框不会空着。
-function promoTitle(card, brand) {
-  const raw = typeof card === 'string' ? card : (card && card.title) || '';
-  const cleaned = String(raw)
-    .replace(/[【\[〔][^】\]〕]*[】\]〕]/g, '')
-    .replace(/[（(][^）)]*[）)]/g, '')
+// 推广标题清洗：keepBracket=true 时保留括号内文字（括号里可能正是差异词「买一送一」）
+function promoClean(raw, keepBracket) {
+  const s = String(raw || '');
+  const noPair = keepBracket
+    ? s.replace(/[【\[〔（(】\]〕）)]/g, '')
+    : s.replace(/[【\[〔][^】\]〕]*[】\]〕]/g, '').replace(/[（(][^）)]*[）)]/g, '');
+  return noPair
     .replace(/￥\s*\d+(?:\.\d+)?/g, '')
     .replace(/\d+(?:\.\d+)?\s*元/g, '')
     .replace(/[，,。；;！!？?、/／|]/g, '·')
     .replace(/\s+/g, '')
     .replace(/^[·]+|[·]+$/g, '');
+}
+
+function promoTitle(card, brand) {
+  const raw = typeof card === 'string' ? card : (card && card.title) || '';
+  let cleaned = promoClean(raw, false);
+  // 2026-11-17：「【买一送一】经典主食」按老规则只剩「经典主食」，推广标题等于没信息。
+  // 去掉括号后只剩修饰词/泛词时，退回保留括号内文字的版本。
+  const thin = (s) => {
+    const core = stripFillers(String(s || '').replace(/[·]+/g, ''));
+    return core.length < 3 || GENERIC_PRODUCT_TERMS.has(core);
+  };
+  if (thin(cleaned)) {
+    const wide = promoClean(raw, true);
+    if (wide && !thin(wide)) cleaned = wide;
+  }
   const segs = cleaned.split(/[·]+/).filter(Boolean);
   let out = segs.join('·');
   if (out.length > PROMO_MAX) {
@@ -196,6 +261,7 @@ function promoTitle(card, brand) {
 }
 
 module.exports = {
-  parseProductCard, pickBestProduct, decideProduct, productTerms, normalizeText, promoTitle,
-  DEFAULT_EXCLUDE, GOOD_WORDS, GENERIC_PRODUCT_TERMS,
+  parseProductCard, pickBestProduct, decideProduct, productTerms, normalizeText, normalizeTextLoose,
+  stripFillers, matchProductTerm, promoTitle,
+  DEFAULT_EXCLUDE, GOOD_WORDS, GENERIC_PRODUCT_TERMS, TITLE_FILLERS,
 };

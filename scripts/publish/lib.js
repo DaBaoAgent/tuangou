@@ -921,6 +921,40 @@ function auditLegacyNoMeta() {
   return records;
 }
 
+// 门店候选挑选（2026-11-17 固化）：POI 列表里既有具体门店「肯德基(府前路店)」，也有只到品牌级的「肯德基」。
+// 08:37 那条选中了品牌级 POI，名字就是搜索词本身、没有分店，锚点等于白挂。
+// 规则（纯函数，便于回归）：带门店后缀的分店优先 → 非品牌级优先 → 带「商品」货架的优先 → 名字更长（挂了下级店名）优先。
+function storeFirstLine(text) {
+  return String(text || '').split('\n')[0].trim();
+}
+function storeHasBranch(text) {
+  const first = storeFirstLine(text);
+  if (!first) return false;
+  if (/[（(][^）)]*[）)]/.test(first)) return true; // 「肯德基(府前路店)」这类带括号的必定是分店
+  return /店|门店/.test(first);
+}
+function pickStoreOption(options, keyword) {
+  const kw = String(keyword || '').trim();
+  const list = (Array.isArray(options) ? options : [])
+    // 命中判断沿用原来的整块文本包含（不收紧行为），分店/品牌级只按第一行判
+    .filter(o => o && String(o.text || '').includes(kw));
+  if (!list.length) return null;
+  const scored = list.map(o => {
+    const first = storeFirstLine(o.text);
+    const branch = storeHasBranch(o.text);
+    const brandPoi = !branch && first === kw; // 名字就是搜索词本身：品牌级 POI
+    let rank = 0;
+    if (branch) rank += 6;
+    if (!brandPoi) rank += 2;
+    if (String(o.text).includes('商品')) rank += 1;
+    if (first.length > kw.length) rank += 0.5;
+    return { o, rank, branch, brandPoi };
+  });
+  scored.sort((a, b) => (b.rank - a.rank) || ((a.o.i || 0) - (b.o.i || 0)));
+  const top = scored[0];
+  return { i: top.o.i, text: top.o.text, brand_poi: top.brandPoi, branch: top.branch, candidates: list.length };
+}
+
 module.exports = {
   ROOT, CONFIG, BRANDS,
   ensureDir, readJson, writeJson,
@@ -932,4 +966,5 @@ module.exports = {
   brandConfirmed, quarantineUnconfirmed,
   isPidAlive, resolvePython, chromiumPath, renameAll,
   brandFromFilename, auditLegacyNoMeta,
+  storeFirstLine, storeHasBranch, pickStoreOption,
 };

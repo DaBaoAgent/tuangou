@@ -279,3 +279,30 @@ test('时段加权排期：可复现、落在窗口内、间隔达标，且明�
 test('时段加权排期：没有桶或权重时返回 null，交给原排期', () => {
   assert.equal(L.buildTimesProfiled('2026-11-10', 2, undefined, undefined, [], {}), null);
 });
+
+test('门店锚点：带分店后缀的 POI 优先，品牌级「肯德基」不被首选（2026-11-17 实跑踩坑）', () => {
+  const options = [
+    { i: 0, text: '肯德基\n112家门店' },
+    { i: 1, text: '肯德基(府前路店)\n1.2km' },
+    { i: 2, text: '肯德基(太仓万达店)\n5.6km' },
+  ];
+  const pick = L.pickStoreOption(options, '肯德基');
+  assert.ok(pick);
+  assert.notEqual(pick.i, 0);
+  assert.equal(pick.brand_poi, false);
+  assert.ok(pick.text.includes('店'));
+});
+
+test('门店锚点：只有品牌级 POI 时才用它，并标记 brand_poi 供日志告警', () => {
+  const options = [{ i: 0, text: '肯德基\n112家门店' }, { i: 1, text: '麦当劳(人民路店)\n2km' }];
+  const pick = L.pickStoreOption(options, '肯德基');
+  assert.equal(pick.i, 0);
+  assert.equal(pick.brand_poi, true);
+});
+
+test('门店锚点：候选里没有搜索词时不选（绝不乱选不相关门店）', () => {
+  const options = [{ i: 0, text: '麦当劳(人民路店)\n2km' }];
+  assert.equal(L.pickStoreOption(options, '肯德基'), null);
+  assert.equal(L.storeHasBranch('肯德基(府前路店)'), true);
+  assert.equal(L.storeHasBranch('肯德基'), false);
+});
