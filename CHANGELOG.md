@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-11-18
+
+- **每日发布量 8 → 5 条**（宝哥指令「每天发布数量改成5个」）：`config.json#schedule` 改 `steady_min=steady_max=5`（ramp 2/3/4、时间窗 06:00–19:00、最小间隔 80 分钟、同品牌冷却 240 分钟、日上限 2 条全部不变，5 条/天需 ≥3 品牌轮换）。当天已经生成的 `runtime/publish/plans/2026-11-18.json` 同步收到 5 条：已发 3 条保留，pending 留 2 档（11:58 / 14:30），15:51 / 17:35 / 18:55 三档改 `status:"skipped"` + `reason`；config 与 plan 都备份 `.bak-20261118030145`。`targetCount()` 复算 11-18/19/20 均为 5。回归 `publish / run_due / copy_title / queue_score / subtitle_gate / publish_settings` 六套全通过。规则同步 `AGENTS.md` 第 4 条与 `scripts/publish/README.md`。
+
 ## 2026-11-11
 
 - **选品硬规则：按视频文案里的商品名匹配，对不上就不挂商品**（宝哥 2026-11-11 定）：`product_pick.js` 新增 `productTerms()` / `decideProduct()`。商品名优先取 `meta.brand.product`，缺省用文案里识别出的商品词（`buildCopy()` 的 `product`，`run_due.js` 已写进计划 `copy.product`）；归一化时丢掉营销括号、价格、标点，剥掉品牌前缀和「2选1 / 大杯 / 套餐」等规格后缀，再在商品列表里做包含匹配——**命中者优先，命中词越长分越高**，同品牌的其他爆款/低价商品不会因为分高被选中。文案商品一条都匹配不到时返回 `product-mismatch`，`publish_one.js#setProduct()` 直接退出、退回只挂门店并在日志与通知里写明原因，**不改挂同品牌的其他商品**；商品名缺省、或本身等于品牌名/「套餐」「代金券」这类泛词时，视为文案未指定商品，才按品牌级规则挑（兼容老行为）。顺带修复 `productTerms()` 把「品牌前缀+单品」（如 `袁记云饺冬菇马蹄云饺`）误判成未指定商品的问题（原先 `productN.includes(brandN)` 会提前返回空词表），并把「品牌+套餐/双杯」这类只有泛词或规格的写法归为未指定商品，避免误触 `product-mismatch` 把整条商品挂载拦掉。`publish_one.js` 的返回与日志新增 `product_expected` / `product_match` / `mismatched`，方便核对挂的是不是文案里那款。回归：`product_pick.test.js` 新增 4 条「硬性规则」用例；全套 **85 项通过**。规则同步写入 `AGENTS.md` 长期规则第 5 条与 `scripts/publish/README.md`。

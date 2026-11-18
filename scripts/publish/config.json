@@ -32,8 +32,8 @@
         "count": 4
       }
     ],
-    "steady_min": 8,
-    "steady_max": 8,
+    "steady_min": 5,
+    "steady_max": 5,
     "min_gap_minutes": 80,
     "brand_cooldown_minutes": 240,
     "brand_daily_cap": 2,

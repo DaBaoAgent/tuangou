@@ -297,3 +297,36 @@
 - **固化产物**：新增 `scripts/auto-edit/batch_manifest.py`（批次 groups → 渲染/审计清单，校验源与成片）、`render_batch.ps1`（两路串行 worker，跳过已成片、`--no-move`、逐条日志、失败汇总退出码 1）、`archive_sources.py`（源素材归档，默认 dry-run，成片缺失/为空/重名跳过）、`scripts/auto-edit/z-line-sop.md`（七步 SOP + 验收清单 + 本批记录）；批次 groups 固化石 `runtime/auto-edit/batches/z-20261117.json`（`batch_manifest.py` 可原样复现 40 条清单，已验证与实跑清单逐条一致）。
 - **规则**：`AGENTS.md` 新增规则 12（Z 线批量剪辑固化：七步脚本链路、两路串行 `--no-move`、审计双坐标判读、三条 cover 决策、只落 Z 盘不入队）；`scripts/auto-edit/README.md`「两条流水线」补 Z 线说明并指向 SOP。
 - **验证**：`render_batch.ps1 -Mod 0 -Of 40` 冒烟按跳过分支正常退出 0；`archive_sources.py` dry-run 对已归档批次正确报「源缺失」40 条且不移动；40 条 meta.json `verify.ok` 全 true。
+
+2026-11-18 Z 线成片接进发布队列（宝哥："我把你在Z盘剪的一部分成片放入 已剪成片 了，加入发布队列吧"）
+
+- **来片**：Z 线 2026-11-17 批次里宝哥挑的 18 条（10 个品牌 × 2 版：饭美滋-老北京片皮鸭 03/04、绝味鸭脖-热卤杯 03/04、肯德基-甜辣好孜味鸡叉骨 03/04、夸父炸串-超值六件套 05/06、田小跳-猪蹄蛙蛙煲 05/06、星巴克-大杯10次卡 03/04、渝八两-重庆鸡公煲 03/04、芝小官-双人海鲜自助 03/04、紫燕百味鸡-冒烤鸭套餐饭 01/02）。Z 盘 `已剪成片` 已清空，可确认是搬进项目队列而不是复制。
+- **指纹与查重**：逐条 SHA256 对 `baidu44_fingerprint.csv`（TY 百度盘线＝另一个号）0 命中、对 `runtime/audit/local_queue_fingerprint.csv` 0 命中、对 `source_blacklist.json` 的 30 条成片名与 14 条源片哈希 0 命中；同目录 `_dup_柳州肥姨妈…mov` 带下划线前缀，仍按约定不进队列。
+- **字幕抽检（规则 10）**：每条约 15.07s，均匀取 6 点、裁 y1040–1760 字幕带 2 倍放大送 Dabao-OCR。17 条命中 4–6 点；`肯德基-甜辣好孜味鸡叉骨-03` 首轮 6 点只中 2 点，改用 y880/h1000 大带 12 点复检命中 6 点（字幕位置偏高 + 采样稀疏，不是没字幕），按通过处理。
+- **闸门登记**：`scripts/publish/subtitle_approved.json` 新增 18 条（文件名 + mtime_ms + size 三指纹，指纹一律取 Node `fs.stat` 与闸门同口径；PowerShell 的 DateTime 换算会差 1ms，上一批 5 条因此差点被判失效）。`auditInventory` 实跑：`approved=33, cached=1, skipped=0, moved=0, failed=0, manual=0`。
+- **紫燕百味鸡品牌闸门**：这 2 条进队时 07:55 那轮被判 `no brand` 移进 `品牌待确认`（`brands.json` 里没登记）。按规则 1 自己联网核实：官网 ziyanfoods.com（紫燕食品 603057，全国 100+ 城区 4000+ 门店）＋官方微博 @紫燕百味鸡 2026-10 冒菜新品冒烤鸭套餐，两路证据一致 → `brands.json` 新增 `紫燕百味鸡`（verified:true，note 记日期与依据）、`runtime/rename-overrides.json` 固定商品「冒烤鸭套餐饭」、`runtime/auto-edit/brand_overrides/` 写 2 份源 stem 覆盖；`rename_final.js` 把两条移出待确认并归位为 01/02。
+- **队列现状**：`素材库\已剪成片` 35 个文件（34 条可发 + 1 条 `_dup_`），`pickVideo` 全量 brand/subtitle/copy 三闸门全绿；品牌分布 古鲁特2、夸父炸串2、星巴克2、暖栗铺3、渝八两2、田小跳2、真茶屋1、紫燕百味鸡2、绝味鸭脖2、肯德基5、肯悦咖啡2、芝小官2、蜀大侠2、赣粉缘1、酸奶罐罐2、饭美滋2。今日计划 8 档已发 1（06:22 肯德基-买一送一主食-07），剩 7 档 08:25–18:55 由 `run_due` 自动选片。
+- **风险**：① `rename_final.js` 每轮 `prepare` 都会跑，新片入队会被重编号（本批 01/02→03/04），放行名单按文件名登记，重编号会让放行失效——登记必须在改名稳定后做，本次已按改名后的最终名登记；② 肯德基队列 5 条，日上限 2 条 + 冷却 240 分钟，靠 `filterBrandRhythm` 自动轮换，8 条/天需至少 4 个品牌可用；③ 34 条按 8 条/天约 4 天见底，`素材库\未剪素材` 仍不存在，要续发得继续补 Z 线成片或源素材。
+- **测试**：`node tmp/audit_zqueue.js`（指纹/查重）、`tmp/probe_subs.py`（抽帧 OCR）、`tmp/queue_view.js`（三闸门全绿清单）三个临时脚本留在 `tmp\`，可原样复跑；未改动任何发布逻辑代码。
+
+2026-11-18 每日发布量 8 → 5 条（宝哥："每天发布数量改成5个"）
+
+- **配置**：`scripts/publish/config.json#schedule` 改 `steady_min=steady_max=5`（备份 `config.json.bak-20261118030145`）。ramp 2/3/4、时间窗 06:00–19:00、最小间隔 80 分钟、同品牌冷却 240 分钟、日上限 2 条全部不动；5 条/天至少要 3 个品牌轮换。
+- **当日计划同步收敛**：`runtime/publish/plans/2026-11-18.json`（备份 `.bak-20261118030145`）`target_count` 8 → 5；已发 3 条（06:22 / 08:25 / 10:11）保留，pending 只留 11:58 / 14:30 两档，15:51 / 17:35 / 18:55 改 `status:"skipped"` + `reason="daily target 5 (2026-11-18 宝哥下调)"`。`targetCount()` 复算 11-18/19/20 = 5/5/5，明晚 19:55 起的自动排期按 5 条生成。
+- **回归**：`node --check` lib/run_due 通过；`publish.test.js`、`run_due.test.js`、`copy_title.test.js`、`queue_score.test.js`、`subtitle_gate.test.js`、`publish_settings.test.js` 六套全绿（排期用例读配置，不写死条数）。
+- **库存口径变化**：队列 34 条可发，8 条/天约 4 天、5 条/天约 7 天见底；`素材库\未剪素材` 仍为空，续发仍需补 Z 线成片或源素材。
+- **文档**：`AGENTS.md` 规则 4 改为 5 条/天并补「单日减量同理」子条，`scripts/publish/README.md` 排期规则同步，`CHANGELOG.md` 记一条。
+
+2026-11-18 Z 线批次剪片（宝哥："继续剪辑 Z 盘的素材"）
+
+- **来片**：`Z:\暂时不用素材\团购\未剪素材` 共 32 条（8 个品牌 × 4 版，先到 24 条、13:18 补野人先生 4 条、14:00 前后补钱小串 4 条）；全部 720×1280 / 24fps / 15.04–15.07s，上采到 1080×1920 / 30fps。`田` 子目录（另一号专用）整目录跳过。
+- **Step 0 闸门**：32 条源片逐条 SHA256 对 `source_blacklist.json` 14 条原片 0 命中，文件名无 `^\d+月\d+日_` 前缀。
+- **退回 8 条（源头错误，不剪）**：① 达美乐 4 条——口播与烧字都念/写「必胜客」，与文件名品牌冲突，改字幕会与配音矛盾；② 海底捞 4 条——把脚本备注「门店名字融入场景展示 / 门店名字就在场景里」直接烧进画面并念出。两批都属生成管线把提示词/错误品牌固化进片，剪辑层修不了，源片留在 `未剪素材` 顶层未归档，等宝哥重新生成脚本+配音。已抽帧取证（`tmp/frames_z/hl_8.png`）。
+- **出片 24 条**：比格披萨-双人自助餐 01–04、必胜客-自助小龙虾返场 01–04、茶百道-固体杨枝甘露 01–04、马鸿兴-新品代金券 01–04、野人先生-双口味冰淇淋 01–04、钱小串-串串香尝鲜套餐 01–04，落 `Z:\暂时不用素材\团购\已剪成片`，全部 1080×1920 / 30fps / 15.07s、10.9–20.7MB，`meta.json#verify.ok` 全 true；**只落 Z 盘，不入项目发布队列（规则 6/12）**。
+- **字幕**：24 份 `corrections-z` + 24 份 `brand_overrides` 双稿；`cover:false` 8 条（必胜客-02、茶百道-02/03/04、野人先生-02/04、钱小串-02，检出的是杯身 logo/门店字，不是烧录字幕），其余 cover 遮盖+重打；错字按音义改（限时/氛围/红汤锅底/戳链接/囤券/杨枝甘露/西米/西柚粒/荤素/费心…），一行未删（规则 7）。
+- **审计**：`audit_subs.py` 两套坐标——24 条按 y1360 带首轮 16 过 / 8 未过（全部是字幕落位偏高，覆盖条与源字幕带都偏高），`--band-y 1080 --band-h 380 --scan-y 1090 --scan-h 320 --tight-y 1120 --tight-h 190` 复检 8/8 `bad=0`、返回码 0；报告 `tmp/audit_a.txt`/`audit_a_retry.txt`/`audit_b.txt`/`audit_b_retry.txt`/`audit_c.txt`/`audit_c_retry.txt`。
+- **归档**：`archive_sources.py --apply` 分 A+B、C 两轮共归档 24 条源素材入 `未剪素材\已剪素材`；顶层只剩 8 条退回片。
+- **品牌登记**：`brands.json` 新增 比格披萨、必胜客、达美乐、海底捞、马鸿兴、钱小串（verified:true，note 记日期+两路证据：官网/门店目录 + 抖音或点评门店实拍团购），茶百道 verified 置 true（官方微博 11-05 固体杨枝甘露破 1000 万杯 + 抖音团购在售）；野人先生 既有条目无需改。
+- **交付清单**：`runtime/auto-edit/reports/z-batch-20261118.md`（成片↔源素材↔大小表、cover 决策、审计结论、退回说明）；批次固化石 `runtime/auto-edit/batches/z-20261118-a/b/c.json`。
+- **踩坑入档**：① 单条审计清单用 PowerShell `ConvertTo-Json` 会被压成对象（审计读成 `MISSING_VIDEO`），必须加 `-AsArray`；② `batch_manifest.py` 遇清单 JSON 语法坏直接抛 JSONDecodeError，清单写完先看一眼；③ 两路渲染必须各传不同 `-Log`，共用默认会互相删日志。
+- **规则**：`AGENTS.md` 规则 12 补「源片内容闸门」——品牌说错/念出脚本文案的源片直接退回不剪，以及 720×1280 上采 1080×1920 属可接受轻度放大。
