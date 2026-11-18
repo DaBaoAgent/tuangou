@@ -2,6 +2,7 @@
 
 ## 2026-11-18
 
+- **Z 线第二波出片 8 条（`z-20261118-d`）**：犇腾牛排-金秋火焰牛排单人餐 01–04、Texas美式烤肉-和牛BBQ双人套餐 01–04，720×1280 源上采 1080×1920 / 30fps / 15.07s，`verify.ok` 全 true，落 Z 盘 `已剪成片`（不入项目队列）。`corrections-z` / `brand_overrides` 各 8 份，`cover:false` 2 条（Texas-02/03 招牌/包装字误检），犇腾-04 字幕带稀疏按 ASR 补全 8 行，一行未删；审计默认带 6/8 过、`--band-y 1080` 复检 2/2 `bad=0` 合计 8/8。源片三重查重 0 命中后归档。`brands.json` 新增 犇腾牛排（官网 botonsteak.com + 抖音门店号 58.8 元火焰牛排单人餐）、Texas美式烤肉（抖音门店号 188 元和牛 BBQ 双人套餐 + 探店实拍）。批次固化石 `runtime/auto-edit/batches/z-20261118-d.json`，交付清单 `runtime/auto-edit/reports/z-batch-20261118-b.md`。
 - **每日发布量 8 → 5 条**（宝哥指令「每天发布数量改成5个」）：`config.json#schedule` 改 `steady_min=steady_max=5`（ramp 2/3/4、时间窗 06:00–19:00、最小间隔 80 分钟、同品牌冷却 240 分钟、日上限 2 条全部不变，5 条/天需 ≥3 品牌轮换）。当天已经生成的 `runtime/publish/plans/2026-11-18.json` 同步收到 5 条：已发 3 条保留，pending 留 2 档（11:58 / 14:30），15:51 / 17:35 / 18:55 三档改 `status:"skipped"` + `reason`；config 与 plan 都备份 `.bak-20261118030145`。`targetCount()` 复算 11-18/19/20 均为 5。回归 `publish / run_due / copy_title / queue_score / subtitle_gate / publish_settings` 六套全通过。规则同步 `AGENTS.md` 第 4 条与 `scripts/publish/README.md`。
 
 ## 2026-11-11
