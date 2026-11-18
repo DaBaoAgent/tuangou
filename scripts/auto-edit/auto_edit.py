@@ -251,6 +251,16 @@ def transcribe_fallback(cfg, video, workdir):
     return out
 
 
+def video_sig(video):
+    """素材签名：大小 + mtime + 前 1MB 的 sha1。修复片/清理版与原件同 stem 时防止复用旧中间产物。"""
+    import hashlib
+    p = Path(video)
+    h = hashlib.sha1()
+    with open(p, "rb") as f:
+        h.update(f.read(1 << 20))
+    return f"{p.stat().st_size}-{int(p.stat().st_mtime)}-{h.hexdigest()[:16]}"
+
+
 def transcribe(cfg, video, workdir):
     try:
         model = get_model(cfg)
@@ -258,8 +268,14 @@ def transcribe(cfg, video, workdir):
         log(f"faster-whisper 不可用，改用 ffmpeg whisper 兜底：{exc}")
         return transcribe_fallback(cfg, video, workdir)
     wav = workdir / "asr.wav"
-    if not wav.exists():
+    stamp = workdir / "asr_src.txt"
+    sig = video_sig(video)
+    fresh = wav.exists() and stamp.exists() and stamp.read_text(encoding="utf-8").strip() == sig
+    if not fresh:
+        if wav.exists():
+            wav.unlink()
         ffmpeg("-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav))
+        stamp.write_text(sig, encoding="utf-8")
     import wave
 
     import numpy as np
@@ -1266,7 +1282,10 @@ def process_clip(cfg, clip, args):
         asr = corrections.get("asr") or []
     else:
         asr_path = workdir / "asr.json"
-        if asr_path.exists() and asr_path.stat().st_mtime >= clip.stat().st_mtime:
+        sig = video_sig(clip)
+        stamp = workdir / "asr_src.txt"
+        if (asr_path.exists() and stamp.exists()
+                and stamp.read_text(encoding="utf-8").strip() == sig):
             asr = json.loads(asr_path.read_text(encoding="utf-8"))
             to_simplified(asr)
             log("复用已识别的 asr.json")
@@ -1274,6 +1293,7 @@ def process_clip(cfg, clip, args):
             asr = transcribe(cfg, clip, workdir)
             to_simplified(asr)
             asr_path.write_text(json.dumps(asr, ensure_ascii=False, indent=2), encoding="utf-8")
+            stamp.write_text(sig, encoding="utf-8")
 
     # 校对稿是人工核对过的字，后面即便跳过字幕层也要留给钩子选词
     corr_lines = list(lines) if (corrections and corrections.get("lines")) else []

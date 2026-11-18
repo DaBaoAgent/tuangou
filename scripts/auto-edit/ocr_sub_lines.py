@@ -148,13 +148,17 @@ def main():
             AE.log(f"[{clip.name}] 字幕带 {y0}-{y1}，合并出 {len(rec['lines'])} 行")
         if not args.no_asr:
             asr_path = workdir / "asr.json"
-            if asr_path.exists() and asr_path.stat().st_mtime >= clip.stat().st_mtime:
+            sig = AE.video_sig(clip)
+            stamp = workdir / "asr_src.txt"
+            if (asr_path.exists() and stamp.exists()
+                    and stamp.read_text(encoding="utf-8").strip() == sig):
                 asr = json.loads(asr_path.read_text(encoding="utf-8"))
                 AE.to_simplified(asr)
             else:
                 asr = AE.transcribe(cfg, clip, workdir)
                 AE.to_simplified(asr)
                 asr_path.write_text(json.dumps(asr, ensure_ascii=False, indent=2), encoding="utf-8")
+                stamp.write_text(sig, encoding="utf-8")
             rec["asr"] = [{"text": s.get("text", ""), "start": round(float(s.get("start") or 0), 2),
                            "end": round(float(s.get("end") or 0), 2)} for s in asr]
             rec["asr_text"] = "".join(x["text"] for x in rec["asr"])

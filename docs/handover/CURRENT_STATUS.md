@@ -350,3 +350,14 @@
 - **成片与校验**：8 条全 1080×1920/30fps，必胜客 4 条 15.07s、海底捞 4 条 12.53/12.78/13.28/13.28s，`verify.ok` 全 true；审计 `tmp/audit_e_pizza.txt` / `tmp/audit_e_hl.txt` 均 bad=0，8/8 通过。
 - **归档**：8 条源素材（含海底捞 4 条原片）进 `未剪素材\已剪素材`，`未剪素材` 顶层已清空。
 - **踩坑入档**：① `ocr_sub_lines.py` 的 ASR 缓存按 `work_dir/<stem>/asr.json` 的 mtime 与素材比，清理版同名会把旧 ASR 当新结果带回来（本次四条草稿的 `asr_text` 仍是旧文本），**字幕行以 OCR 为准，ASR 必须独立重跑复核**；② `batch_manifest.py` 没有过滤参数，分组跑要单独建 groups 文件；③ 用清理版当源时，`render_batch.ps1` 要显式传 `-Config runtime/auto-edit/config-z-clean.json`（其 `paths.source_dir` 指向 `tmp/clean_haidilao`），否则会回头去渲染原始缺陷片。
+
+2026-11-18 「固化一下」——缺陷修复支线落成脚本 + 修掉 ASR 缓存 bug
+
+- 新增 `scripts/auto-edit/repair_cut.py`：按时间码把源片缺陷段（念出的脚本备注等）连画面带音频切掉，trim+concat `/libx264 crf16`，默认两侧留 0.12s，默认 dry-run，`--apply` 才落盘；产物旁写 `<stem>.repair.json`（切点/保留段/源与出时长/素材签名）。
+- 新增 `scripts/auto-edit/stage_config.py`：从 `config-z-new.json` 派生清理版专用配置（`paths.source_dir` 指向清理版目录），OCR/渲染必须显式 `-Config`，否则同 stem 会读回原件。
+- 新增 `scripts/auto-edit/recheck_asr.py`：临时目录重新抽音频转写，不复用任何缓存；`--forbid "门店名字,融入场景"` 命中即退出码 1（救回批复核实测 12.54s 干净通过）。
+- 新增 `scripts/auto-edit/source_gate.py`：Step 0 来源闸门脚本化（黑名单哈希 / 已归档源片 / 已成片 三重查重，命中按原因列出、退出码 1）。
+- **修 ASR 缓存 bug**：`auto_edit.py#transcribe()` 原先只在 `asr.wav` 不存在时才抽音频，同名清理版会复用原件音频导致 ASR 吐旧文本。改为 `video_sig()`（大小+mtime+前 1MB sha1）写 `asr_src.txt`，签名不符即删旧 wav 重抽；`transcribe()` 与 `ocr_sub_lines.py` 的 `asr.json` 缓存一并改签名校验（不再按 mtime）。回归脚本 `tmp/regress_asr_cache.py`：同 workdir 先后转写两条不同素材，签名/文本/音频时长全部跟随 → PASS。
+- `z-line-sop.md`：新增「缺陷修复支线」（Step 0.5 内容闸门三类判法表 / Step 3.5 切段 / Step 3.6 清理版配置 / Step 3.7 ASR 复核 / 缓存机制说明），验收清单加修复类条目，Step 0 改为 `source_gate.py`，补 2026-11-18 批次记录。README 同步。
+- `AGENTS.md` 规则 12 ② 指向新脚本与「同 stem 换源会自动重抽」，不再泛泛写「用 ffmpeg trim+concat」。
+- 清理 `tmp/` 临时脚本：`cut_haidilao.py` / `asr_probe.py` / `mk_clean_config.py` / `gate_1118b.py` 已被正式脚本替代，试跑产物 `tmp/clean_rehearsal`、`tmp/config-rehearsal.json`、`tmp/cachetest` 已删。

@@ -66,6 +66,11 @@ python scripts/auto-edit/settle_sync_baidu.py --batch-dir ... --apply
 同样**不进项目发布队列**。批量流程（清单 → 草稿 → 校对稿 → 两路串行渲染 → 双坐标审计 → 归档）
 见 `scripts/auto-edit/z-line-sop.md`，配套脚本 `batch_manifest.py`（清单）、`render_batch.ps1`
 （批量渲染 worker）、`archive_sources.py`（归档，默认 dry-run）、`ocr_sub_lines.py`（字幕草稿）。
+源片本身有缺陷（品牌与文件名不符、念出脚本备注）时走 SOP 的「缺陷修复支线」：`repair_cut.py`
+（按时间码连画面带音频切掉缺陷段，`--apply` 才落盘，产物旁写 `<stem>.repair.json`）、
+`stage_config.py`（派生清理版专用配置，避免同 stem 读回原件）、`recheck_asr.py`（独立 ASR 复核，
+`--forbid` 命中即退出码 1）。`work_dir/<stem>/` 的 `asr.wav` / `asr.json` 按素材签名
+（`video_sig` = 大小+mtime+前 1MB sha1）判新鲜，换源或修片后会自动重抽。
 
 
 ## 素材自带字幕
