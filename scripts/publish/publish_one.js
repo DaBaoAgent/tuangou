@@ -185,23 +185,42 @@ async function setCovers(page) {
 // 品牌名里常带品类后缀（茶芭蕾新疆酸奶 / 某某烤肉自助），而 POI 门店名只写品牌主词。
 // 2026-11-14 实跑：茶芭蕾新疆酸奶-待确认-03 整串搜出 12 个候选、无一含品牌串 → 挂不上门店 → PUBLISH_FAIL location-missing。
 // 这里给出「品牌整串 → 去括号 → 去品类后缀」的搜索词序列，逐个试；只有门店名包含当前搜索词才选，绝不乱选。
-const CATEGORY_SUFFIXES = ['新疆酸奶', '新疆奶茶', '鲜奶茶', '鲜果茶', '奶茶', '酸奶', '茶饮', '果茶', '咖啡', '美式', '拿铁', '火锅', '烤肉', '自助', '炸鸡', '鸡排', '汉堡', '螺蛳粉', '米线', '麻辣烫', '串串', '甜品', '蛋糕', '烘焙', '零食', '食品', '饮品', '水饺', '饺子', '拌面', '套餐', '代金券'];
+const CATEGORY_SUFFIXES = ['新疆酸奶', '新疆奶茶', '鲜奶茶', '鲜果茶', '奶茶', '酸奶', '茶饮', '果茶', '咖啡', '美式', '拿铁', '火锅', '烤肉', '自助', '炸鸡', '鸡排', '汉堡', '螺蛳粉', '米线', '麻辣烫', '串串', '甜品', '蛋糕', '烘焙', '零食', '食品', '饮品', '水饺', '饺子', '拌面', '披萨', '比萨', '套餐', '代金券'];
+// alias（2026-11-19）：品牌的官方叫法常常和我们的品牌名不一样（比格披萨 vs 比格比萨、BIGPIZZA），
+// 只用品牌名搜门店会搜不到分店、退化成品牌级 POI。从 brands.json 的 aliases 里补中文别名一起搜。
+function brandAliases(brand) {
+  const list = (L.BRANDS && Array.isArray(L.BRANDS.brands)) ? L.BRANDS.brands : [];
+  const e = list.find(x => String((x && x.name) || '') === brand)
+    || list.find(x => (x && x.aliases || []).includes(brand));
+  if (!e) return [];
+  return (e.aliases || []).filter(a => /[\u4e00-\u9fff]/.test(String(a)) && !String(a).includes(brand));
+}
+
 function brandKeywords(brand) {
   const raw = String(brand || '').trim();
   if (!raw) return [];
-  const out = [raw];
-  const noParen = raw.replace(/（[^）]*）|\([^)]*\)|\[[^\]]*\]/g, '').trim();
-  if (noParen && !out.includes(noParen)) out.push(noParen);
-  let core = noParen || raw;
-  const sorted = CATEGORY_SUFFIXES.slice().sort((a, b) => b.length - a.length);
-  for (const suf of sorted) {
-    if (core.length > suf.length && core.endsWith(suf)) {
-      core = core.slice(0, core.length - suf.length).trim();
-      break;
-    }
+  const seeds = [raw, ...brandAliases(raw)];
+  const out = [];
+  const push = (k) => { const v = String(k || '').trim(); if (v.length >= 2 && !out.includes(v)) out.push(v); };
+  // 先按原样搜（品牌名、官方别名），再用去掉品类后缀的核心词兜底——核心词要排在别名之后，
+  // 否则「比格」会先命中品牌级 POI，把分店挡在后面（2026-11-19 实测）。
+  for (const seed of seeds) {
+    push(seed);
+    const noParen = seed.replace(/（[^）]*）|\([^)]*\)|\[[^\]]*\]/g, '').trim();
+    push(noParen);
   }
-  if (core.length >= 3 && !out.includes(core)) out.push(core);
-  return out.filter(k => k.length >= 2);
+  for (const seed of seeds) {
+    let core = seed.replace(/（[^）]*）|\([^)]*\)|\[[^\]]*\]/g, '').trim() || seed;
+    const sorted = CATEGORY_SUFFIXES.slice().sort((a, b) => b.length - a.length);
+    for (const suf of sorted) {
+      if (core.length > suf.length && core.endsWith(suf)) {
+        core = core.slice(0, core.length - suf.length).trim();
+        break;
+      }
+    }
+    push(core);
+  }
+  return out;
 }
 
 async function searchStoreOptions(page, keyword) {

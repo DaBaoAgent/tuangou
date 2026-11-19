@@ -3,6 +3,9 @@
 ## 2026-11-19
 
 - **Z 线成片入库 20 条**：宝哥把 Z 盘剪好的成片放进 `素材库\已剪成片`，按规则 10 三指纹登记（`scripts/publish/subtitle_approved.json`，备份 `.bak-20261119`），放行名单 62 条、待发 49 条。字幕实证用项目内 `corrections-z` 校对稿逐行 OCR 比对，20/20 通过（7 条字幕偏高切高位带复检）；与黑名单、TY 百度盘线、已发成片三处哈希 0 命中。报告 `runtime/publish/zqueue-20261119.md`。
+- **定点发布 `publish_named.js` + 品牌关键词按别名搜店**（宝哥「今天先把 2 个比格披萨先发掉」）：`run_due.js` 按 `queue_score` 自选片子、无法指定，新增 `scripts/publish/publish_named.js` 按成片名定点发布，仍走全部闸门（字幕三指纹放行、品牌确认、同品牌冷却/每日上限、文案质量），并占当天最早一个 pending 档位记账（`published_at`/位置/商品/`moved_to`、`state.history`、归档）。预检时比格搜不到门店，查明两因：`CATEGORY_SUFFIXES` 缺「披萨/比萨」、核心词长度门槛 3 把「比格」挡掉，且没读 `brands.json` 的别名（官方名「比格比萨 / BIGPIZZA」）。已改 `publish_one.js#brandKeywords`：后缀表补披萨/比萨、核心词门槛 3→2、新增 `brandAliases()` 从 `L.BRANDS.brands` 取中文别名，且顺序为「原名 → 别名 → 去后缀核心词」（核心词排在别名前会先命中品牌级 POI、把分店挡在后面）。实测关键词 `["比格披萨","比格比萨","比格"]`，抖音 POI 里比格只有品牌页、无分店，按规则 11 退化挂品牌页并打 `brand_poi` 日志；商品「双人自助餐」对 10 个候选无命中、`brand_product_hints` 无比格条目，按规则 5 不挂商品。
+  - **比格披萨-双人自助餐-03 已实发**（09:08，`verified found=true status=审核中`，`work_id=null`）：成片归档 `素材库\已剪成片\已发成片\`，计划条目 `2026-11-19-03` 写 published。04 受 240 分钟同品牌冷却限制，建一次性本地定时任务「比格披萨第二条发布」（`at` 2026-11-19 13:12）自动补发，排在 15:13 档之前，打满今日 5 条。
+  - **回归**：`publish / run_due / copy_title / queue_score / subtitle_gate / publish_settings / product_pick / analytics / revenue / quarantine` 十套全过；`product_attach.test.js` 3 项失败经核对**在 HEAD 上同样失败**（本地 HTML fixture 失效，非本次改动引入）。
 - **编号后移 2 的坑**：宝哥把 Z 线成片编号整体后移（01/02→03/04、03/04→05/06），文件名与批次清单不再对应，按文件名溯源会配错 stem；改为按**文件大小**回查交付清单表定 stem。另：`真茶屋-羽衣甘蓝白糯米-04.mp4` 来源不明（项目内无渲染记录），未登记。
 
 ## 2026-11-18
