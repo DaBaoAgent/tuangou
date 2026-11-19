@@ -361,3 +361,13 @@
 - `z-line-sop.md`：新增「缺陷修复支线」（Step 0.5 内容闸门三类判法表 / Step 3.5 切段 / Step 3.6 清理版配置 / Step 3.7 ASR 复核 / 缓存机制说明），验收清单加修复类条目，Step 0 改为 `source_gate.py`，补 2026-11-18 批次记录。README 同步。
 - `AGENTS.md` 规则 12 ② 指向新脚本与「同 stem 换源会自动重抽」，不再泛泛写「用 ffmpeg trim+concat」。
 - 清理 `tmp/` 临时脚本：`cut_haidilao.py` / `asr_probe.py` / `mk_clean_config.py` / `gate_1118b.py` 已被正式脚本替代，试跑产物 `tmp/clean_rehearsal`、`tmp/config-rehearsal.json`、`tmp/cachetest` 已删。
+
+2026-11-19 Z 线成片入库（宝哥把 Z 盘成片放进了 素材库\已剪成片）
+
+- 新登记 20 条（10 品牌 × 2，全部来自 batches/z-20261118-*）：放行名单 62 条；素材库\已剪成片 现有 49 条待发（48 已放行）。
+- 溯源：宝哥把编号整体后移 2（01/02→03/04、03/04→05/06），文件名对不上批次 → 按文件大小回查交付清单表定 stem，逐条与 corrections-z 校对稿 OCR 比对。
+- 字幕实证 20/20 通过：13 条默认坐标 y1360 bad=0，7 条（Texas-04 / 必胜客-小龙虾-04 / 茶百道-03·04 / 野人先生-05·06 / 马鸿兴-06）字幕落位偏高，切高位带 --band-y 1080 --tight-y 1120 复检 bad=0。
+- 查重 0 命中：source_blacklist 14 条 / runtime/audit/baidu44_fingerprint.csv（TY 百度盘线 44 条）/ 已发成片 106 条。
+- 队列余量：稳态 5 条/天约 9.8 天；今日 2026-11-19 计划 5 条，已发 2、待发 3。
+- 遗留：`真茶屋-羽衣甘蓝白糯米-04.mp4` 在目录内但项目里没有任何渲染记录（work*/meta.json 0 命中），来源不明，未登记、不进队列。
+- 备份：scripts/publish/subtitle_approved.json.bak-20261119；报告 runtime/publish/zqueue-20261119.md。
