@@ -74,10 +74,28 @@ py scripts/auto-edit/ocr_sub_lines.py --config runtime/auto-edit/config-z-new.js
 | 检出的是杯身/包装/门头招牌字 | 校对稿写 `"cover": false`，只叠自己的字幕（本批：绝味(1)、渝八两 base、渝八两(3)） |
 | 检出带把包装字一起圈进来 | 校对稿写显式 `"cover": [{"y0":1462,"y1":1558,"t0":0,"t1":15.07}]` 只遮真字幕（本批：绝味 base 检出 1246–1792） |
 
-品牌归一按规则 7：画面/字幕里的品牌名和文件名品牌不一致时一律按文件名重打。本批实例：
+**校对稿怎么写（2026-11-20 固化，别再用「按 ASR 词切行」或「按草稿窗口拼句」）**：这两种切法都会把词切两半（「蚝友黑牛烤」｜「肉」）并把 ASR 幻觉留在字幕里。现做法是**逐条手写口播句**（一条片子 5–10 句，照人念的句子写，不照 ASR 分词），再用 `asr.json` 的**词级时间戳按字符累计**做对齐：把整条口播按句子切成字符序列，按字符索引比例落到词时间上，找不到就顺序兜底；最后对时间轴做一次连续化（首行 0s、行间首尾相接、末行钉 `dur`、最小 0.4s、防重叠）再过 Step 3.8 闸门。替换表按批次单独维护（同音/近音误读、品牌归一、噪声黑名单如「感谢观看」「YoYoTelevisionSeriesExclusive」整行丢弃），不要复用别的批次的表。
+
+品牌归一按规则 13：**以片内口播 + 烧录字幕为准**，文件名与片内不一致就改片子这侧的命名（2026-11-20 实例：文件名 `coco` 的四条全片念「沪上阿姨波波家族」→ 出片 `沪上阿姨-波波奶茶-01..04`；文件名「耗友黑牛」实为「蚝友黑牛」）。只有片内证据不足时才退回文件名。本批对照实例：
 夸父炸串原字幕「巷口/港口炸物社」、芝小官原字幕「韩宫宴/韩宫宫/韩宫夏/韩宫恩/韩宫愿」、田小跳 ASR「甜小跳」。
 错字按音义改（鸡刹骨→鸡叉骨、祖然→孜然、吊渣→掉渣、螺丝粉→螺蛳粉、冒鸡鸭→冒烤鸭、里背肉→里脊肉、
 六参套/六修套→六件套、核销误识成「核酸」…），**一行不删**（规则 7）。
+
+**Step 3.8 字幕时间轴闸门（`check_sub_gaps.py`，2026-11-19 固化）。** 渲染前先把校对稿过一遍，只查时间轴不渲染，秒级出结果：
+
+```powershell
+py scripts/auto-edit/check_sub_gaps.py --dir runtime/auto-edit/corrections-z `
+  --stems-file tmp/render_list.json --fail      # 有 FAIL 退出码 1，别往下渲染
+```
+
+判的是三件事：相邻行 **空档** >0.15s（字幕消失再出现＝一跳）、相邻行 **重叠** >0.05s（两行叠字＝一跳）、**首行迟到** >0.1s。行时长 <0.4s 的只报 WARN。
+
+**字幕「一跳一跳」是怎么修掉的（这条不要再退回手工）**
+
+- `auto_edit.py#stabilize_lines`（渲染前必走，覆盖校对稿与纯 ASR 两条路径）：排序 → 短碎片并入上一行（合并后不超 `max_chars`，避免缩字）→ 首行拉回 0s → 中间行首尾相接（`end = next.start`，空档全填）→ 不足 `min_duration` 的行向下一行借时间（下一行仍保 ≥0.8×`min_duration`）→ 收尾再兜一遍防重叠。它只动时间、只合并不超字数的碎片，**不删行**（规则 7）。
+- `auto_edit.py#normalize_cover_bars`：遮盖条同 y 带（±8px）合并、≤0.8s 断口合并；检出覆盖 ≥60% 时长就整条拉到 `0→dur`，否则首尾延伸到 0/dur；上下两层不合并（避免糊成一大块）。
+- 回归：`py scripts/auto-edit/test_sub_timeline.py`，10 例（空档闭合、借时不叠字、碎片合并不超字、首尾贴边、遮盖条合并/分层/延伸）必须全 PASS。改这两个函数后先跑它。
+- 口径：历史 138 份校对稿里有 368 处空档（最大 6.7s），是「一跳一跳」的成因；新批次一律 0 空档（2026-11-19 批 48/48 实测 FAIL=0 WARN=0）。
 
 **Step 4 渲染（串行两路，一律 `--no-move`）。**
 
@@ -93,22 +111,28 @@ Start-Process pwsh -ArgumentList "-NoProfile","-File","scripts/auto-edit/render_
 - `--clip` 有「精确 stem 命中优先」行为：`--clip 柳大厨` 只匹配无括号那条；补跑带括号的要用完整 stem 或 `--stems`。
 - `naming.keep_source_name=true` 时不传 `--name` 就会保留源素材名（8:53 那批 81度 就是这样落的），批量务必传 `--name`。
 
-**Step 5 审计（两套坐标各跑一遍）。**
+**Step 5 审计（坐标按配置实测，别照抄别人的带）。**
+
+先抽一帧量字幕落位（一句命令搞定）：
 
 ```powershell
-# 第一次：新版样式字幕带（y1360 起）
-py scripts/auto-edit/audit_subs.py --stage "Z:\暂时不用素材\团购\已剪成片" `
-  --items tmp/audit_items_z.json --corrections runtime/auto-edit/corrections-z --report tmp/audit_z.txt
-
-# 第二次：字幕落位偏高的条目（y≈1150–1300，源素材字幕带本来就高，柳大厨 1263-1347、夸父(3) 1293-1383 等）
-py scripts/auto-edit/audit_subs.py --stage "Z:\暂时不用素材\团购\已剪成片" `
-  --items tmp/audit_items_z_retry.json --corrections runtime/auto-edit/corrections-z --report tmp/audit_z_retry.txt `
-  --band-y 1080 --band-h 330 --scan-y 1130 --scan-h 280 --tight-y 1120 --tight-h 170
+ffmpeg -y -ss 4 -i "Z:\暂时不用素材\团购\已剪成片\<成片名>" -frames:v 1 -vf "crop=1080:220:0:1180" tmp\probe.png
+# 看一眼 probe.png，字幕落在 crop 的哪一段 → 反推绝对 y，再定 --band-y
 ```
 
-第一次报告里 `bad=N`（逐行全失败）几乎都是字幕不在 y1360 带，不是字幕错了——先按失败清单切第二次坐标重审，
-别急着改稿重渲。`SCAN` 命中是背景招牌/logo（STARBUCKS、门头字、包装字），不算失败。
-两次都 `bad=0`、返回码 0 才算过。
+```powershell
+# 现行配置（subtitle.margin_v=552）字幕实测 y≈1240–1300，用这一套坐标一次过（2026-11-20 批 36/36 bad=0）
+py scripts/auto-edit/audit_subs.py --stage "Z:\暂时不用素材\团购\已剪成片" `
+  --items tmp/audit_items_z.json --corrections runtime/auto-edit/corrections-z --report tmp/audit_z.txt `
+  --band-y 1080 --band-h 560 --scan-y 1080 --scan-h 560 --tight-y 1120 --tight-h 240
+
+# 旧配置/源素材字幕本来就高的条目：y≈1150–1300（柳大厨 1263-1347、夸父(3) 1293-1383）
+py scripts/auto-edit/audit_subs.py ... --band-y 1080 --band-h 330 --tight-y 1120 --tight-h 170
+```
+
+报告里 `bad=N`（逐行全失败）几乎都是字幕不在这个带上，不是字幕错了——先抽帧量落位、切坐标重审，别急着改稿重渲。
+**读到的文本是水印（`GoooNIGHT好运满满`、`CacoMRON` 之类）也说明坐标切在字幕下缘**，同样先切坐标。
+`SCAN` 命中是背景招牌/logo（STARBUCKS、门头字、包装字），不算失败。两次都 `bad=0`、返回码 0 才算过。
 
 **Step 6 归档源素材。**
 
@@ -185,6 +209,8 @@ ASR 继续吐含缺陷句的旧文本。**换源、修片、重渲后一定要�
 - [ ] 源素材 40/40 都在 `已剪素材`，`未剪素材` 顶层清零
 - [ ] 成片数 = 清单条数，命名全为 `品牌-商品-序号.mp4`
 - [ ] 每条 `runtime/auto-edit/work-z-batch/<stem>/meta.json` 的 `verify.ok` 为 true（1080×1920 / 30fps / 时长一致）
+- [ ] `check_sub_gaps.py` 对本批 FAIL=0（相邻行 0 空档、0 重叠、首行 0s 起）
+- [ ] `test_sub_timeline.py` 10/10 PASS（改过字幕/遮盖代码才需要，但改了就必跑）
 - [ ] 审计两次坐标均 `bad=0`、返回码 0
 - [ ] 抽查 cover 类抽帧：原字幕已糊、新字幕压在模糊条中间、包装/招牌字没被误糊
 - [ ] 走过修复支线的条目：`report.json` 有切点记录、`recheck_asr.py` 未命中禁用词、抽帧看拼缝连贯
@@ -206,3 +232,12 @@ ASR 继续吐含缺陷句的旧文本。**换源、修片、重渲后一定要�
 - 审计坐标：本批 6 条走高位带（`--band-y 1080 --band-h 380 --scan-y 1090 --scan-h 320 --tight-y 1120 --tight-h 190`），其余默认 y1360；最终 40/40 `bad=0`。
 - 踩坑：`ConvertTo-Json` 单元素数组塌成对象（配 `-AsArray`）；`batch_manifest.py` 无过滤参数要单独建 groups；两路渲染每路必须不同 `-Log`。
 - 缓存修正：`asr.wav`/`asr.json` 改按素材签名判新鲜（`video_sig`），同名清理版不再串旧音频。
+
+## 2026-11-19 批次记录（48 条 + 字幕连续性固化）
+
+- 源片 40 条 + 中途追加 8 条（吉屋出猪 4 / 胖丫重庆老火锅 4）= 48 条；成片 48 条落 `已剪成片`（681.3 MB），源片全部归档。
+- 本批首次启用 `check_sub_gaps.py` 闸门：48 份校对稿 FAIL=0 / WARN=0；`stabilize_lines` 对 48 份已是幂等（再跑一遍 0 变化）。
+- 本轮改动：`stabilize_lines` 收尾新增防重叠合拢（借时/0.3s 保底会把上一行顶进下一行，两行同显也是一跳）。
+- 教训：**别用 `--band-y 1360` 一刀切**——无烧录字幕带的条目走 `subtitle.margin_v=552`，字幕着墨中心 ≈y1316，落在带外；本批 9 条先被误判全行失败，换 `--band-y 1250 --band-h 460` 复检 13/13 `bad=0`。审前先抽一帧量一下字幕落位。
+- cover 误判一例：茶瀑布(3) 检出 1197–1333 是杯身「真奶做放心喝」，写 `"cover": false`。
+- 顽欢 4 条走修复支线切「来门店名」；其中 (3) 切后 10.24–13.54，重剪 11.54s，成片重渲并复检 `bad=0`。

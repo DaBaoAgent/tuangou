@@ -282,6 +282,30 @@ node scripts/auto-edit/hook_overlay_stock.js             # 全量到 素材库/�
 再次运行同一条素材会优先使用校对稿。默认 skip 模式下自带字幕的素材会整条跳过字幕，
 校对稿不生效；改用 `legacy_sub.mode=cover` 后，校对稿才用于遮盖并重打。
 
+## 字幕时间轴：连续、不跳（2026-11-19 固化）
+
+宝哥口径「字幕不要一跳一跳的」。两类「跳」都在时间轴上修，不靠删行：
+
+- **空档跳**：OCR 草稿按文本变化切行，句间常有 0.2–6.7s 空档，字幕消失再冒出来。渲染前的
+  `auto_edit.py#stabilize_lines` 统一处理：短碎片并入上一行（合并不超 `max_chars`）、首行拉回 0s、
+  中间行 `end = next.start` 首尾相接、不足 `min_duration` 的行向下一行借时（下行保 ≥0.8×min_duration），
+  收尾再兜一遍防重叠。校对稿路径和纯 ASR 路径都过它。
+- **遮盖条闪**：`normalize_cover_bars` 合并同 y 带（±8px）与 ≤0.8s 断口；检出覆盖 ≥60% 时长就整条
+  拉到 `0→dur`；上下两层不合并。
+
+渲染前闸门（不渲染、秒级）：
+
+```powershell
+py scripts/auto-edit/check_sub_gaps.py --dir runtime/auto-edit/corrections-z --stems-file tmp/render_list.json --fail
+```
+
+空档 >0.15s / 重叠 >0.05s / 首行迟到 >0.1s 记 FAIL，`--fail` 时有 FAIL 即退出码 1。
+改过这两个函数或字幕样式，先跑回归：
+
+```powershell
+py scripts/auto-edit/test_sub_timeline.py    # 10 例，必须全 PASS
+```
+
 ## 成片字幕审计（发布前闸门）
 
 批量重制或手工修字后，发版前用 `audit_subs.py` 做最后一道 OCR 复核。它按校对稿逐行
@@ -310,6 +334,10 @@ python scripts/auto-edit/audit_subs.py \
 | 全片扫描 | `--scan-y/--scan-h/--scan-scale` | `1390 / 280 / 2x` |
 | 失败重查 | `--tight-y/--tight-h/--tight-scale` | `1455 / 130 / 4x` |
 
+- **坐标先量再切（2026-11-20 固化）**：`margin_v=552` 的 Z 线成片字幕实测落在 **y≈1240–1300**，用
+  `--band-y 1080 --band-h 560 --scan-y 1080 --scan-h 560 --tight-y 1120 --tight-h 240`（11-20 批 36/36 `bad=0`）；
+  `--band-y 1360` 会切到字下缘、只读到 `GoooNIGHT好运满满` 这类水印。换配置/换样式先
+  `ffmpeg -ss 4 -vf "crop=1080:220:0:1180"` 抽一帧量落位。
 - 新版成片字幕实际在 y≈1464–1557；老版（7 月前样式）在 y≈1274–1358，用
   `--band-y 1150 --scan-y 1200 --tight-y 1250`；720p 烧录素材原字幕带在 y≈920–1160。
 - 报告里的 `SCAN` 命中（`scan_flags`）**不计为失败**，多半是背景招牌/logo（luckincoffee、

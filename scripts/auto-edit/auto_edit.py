@@ -463,6 +463,108 @@ def build_lines(asr, dur, cfg):
     return out
 
 
+def stabilize_lines(lines, dur, cfg, asr=None):
+    """把字幕时间轴整理成「连续、不闪」：相邻行首尾相接、短行并入邻居、首行从 0 秒起。
+
+    2026-11-19 宝哥反馈「字幕不要一跳一跳的」：OCR 草稿按文本变化切行，句间常有
+    0.2–6s 的空档，字幕一会儿消失一会儿冒出来，观感就是在跳。这里只调整时间和
+    合并短句，不删行（规则 7）。
+    """
+    sub = cfg["subtitle"]
+    min_dur = float(sub.get("min_duration", 0.8))
+    max_chars = int(sub.get("max_chars", 12))
+    out = sorted(
+        ({"text": clean_text(x.get("text", "")),
+          "start": float(x.get("start") or 0),
+          "end": float(x.get("end") or 0)} for x in lines if clean_text(x.get("text", ""))),
+        key=lambda x: x["start"],
+    )
+    for ln in out:
+        ln["start"] = max(0.0, min(ln["start"], max(0.0, dur - 0.2)))
+        ln["end"] = min(max(ln["end"], ln["start"] + 0.25), dur)
+
+    # 短碎片并入上一行（合并后不超过单行字数上限，避免缩字）
+    merged = []
+    for ln in out:
+        if merged:
+            prev = merged[-1]
+            if (ln["end"] - ln["start"] < min_dur * 0.75
+                    and len(prev["text"]) + len(ln["text"]) <= max_chars
+                    and ln["start"] - prev["end"] <= 1.2
+                    and prev["text"] != ln["text"]):
+                prev["text"] += ln["text"]
+                prev["end"] = max(prev["end"], ln["end"])
+                continue
+        merged.append(ln)
+    out = merged
+    if not out:
+        return []
+
+    # 首行从 0 秒起，尾行至少展示 min_dur，中间无缝衔接
+    out[0]["start"] = 0.0
+    for i in range(len(out) - 1):
+        out[i]["end"] = max(out[i]["start"] + 0.3, out[i]["end"])
+        out[i]["end"] = out[i + 1]["start"] if out[i]["end"] < out[i + 1]["start"] else min(out[i]["end"], out[i + 1]["start"])
+        if out[i]["end"] < out[i]["start"] + 0.3:
+            out[i]["end"] = out[i]["start"] + 0.3
+    out[-1]["end"] = min(dur, max(out[-1]["end"], out[-1]["start"] + min_dur))
+
+    # 展示时长不足 min_dur 的行，从下一行借时间（下一行仍保留至少 0.8*min_dur）
+    for i in range(len(out) - 1):
+        need = min_dur - (out[i]["end"] - out[i]["start"])
+        if need <= 0:
+            continue
+        nxt = out[i + 1]
+        if nxt["end"] - nxt["start"] - need >= min_dur * 0.8:
+            out[i]["end"] += need
+            nxt["start"] += need
+
+    # 最后兜一遍：借时间/保底 0.3s 都可能把上一行的 end 顶到下一行 start 之后，
+    # 两行同时出现会被看成「字幕叠在一起又跳掉」，这里强制首尾相接、不留重叠。
+    for i in range(len(out) - 1):
+        if out[i + 1]["start"] < out[i]["end"]:
+            out[i + 1]["start"] = out[i]["end"]
+        if out[i + 1]["end"] <= out[i + 1]["start"]:
+            out[i + 1]["end"] = min(dur, out[i + 1]["start"] + min_dur * 0.5)
+
+    for ln in out:
+        ln["start"], ln["end"] = round(ln["start"], 3), round(ln["end"], 3)
+    return out
+
+
+def normalize_cover_bars(bars, dur):
+    """合并遮盖条的时间段，避免模糊条一会儿出现一会儿消失（同样会被看成在跳）。"""
+    if not bars:
+        return []
+    out = []
+    for b in sorted(bars, key=lambda x: (int(x["y0"]), float(x["t0"]))):
+        b = {"y0": int(b["y0"]), "y1": int(b["y1"]), "t0": float(b["t0"]), "t1": float(b["t1"])}
+        for o in out:
+            if abs(o["y0"] - b["y0"]) <= 8 and abs(o["y1"] - b["y1"]) <= 8:
+                o["y0"], o["y1"] = min(o["y0"], b["y0"]), max(o["y1"], b["y1"])
+                if b["t0"] <= o["t1"] + 0.8:
+                    o["t1"] = max(o["t1"], b["t1"])
+                else:
+                    out.append(b)
+                break
+        else:
+            out.append(b)
+    out.sort(key=lambda x: x["t0"])
+    if out:
+        covered = sum(o["t1"] - o["t0"] for o in out)
+        # 检出跨度已占大半个片子（说明整条片子都有烧录字幕）：每条带都拉到整条时长，
+        # 免得模糊条在中间断开又接上（断口本身就是「一跳」）。带与带之间不合并，
+        # 避免上下两层字幕被连成一整块大模糊区。
+        if covered >= dur * 0.6:
+            out = [{"y0": o["y0"], "y1": o["y1"], "t0": 0.0, "t1": round(dur, 2)} for o in out]
+        else:
+            out[0]["t0"] = 0.0
+            out[-1]["t1"] = max(out[-1]["t1"], dur)
+    for o in out:
+        o["t0"], o["t1"] = round(o["t0"], 2), round(o["t1"], 2)
+    return out
+
+
 def ass_time(t):
     t = max(0.0, t)
     h = int(t // 3600)
@@ -1256,7 +1358,7 @@ def process_clip(cfg, clip, args):
     elif isinstance(corr_cover, list):
         legacy = corr_cover
     skip_subs = bool(legacy) and sub_mode != "cover" and cfg["subtitle"].get("skip_if_legacy", True)
-    cover_bars = legacy if (legacy and sub_mode == "cover") else []
+    cover_bars = normalize_cover_bars(legacy, dur) if (legacy and sub_mode == "cover") else []
     if cover_bars:
         log(f"按 cover 模式遮盖自带字幕并重打（{len(cover_bars)} 段）")
         # 2026-11-14：片头推近会给整帧带来 (punch-1) 的位移（锚点在 y=0），
@@ -1311,6 +1413,7 @@ def process_clip(cfg, clip, args):
         if not lines:  # 没有校对稿时才用 ASR 结果
             lines = build_lines(asr, dur, cfg)
         if lines:
+            lines = stabilize_lines(lines, dur, cfg, asr)
             ass_mv = cover_centered_margin_v(cfg, cover_bars) if cover_bars else int(cfg["subtitle"]["margin_v"])
             if cover_bars:
                 log(f"cover 字幕垂直居中：margin_v={ass_mv}（相对模糊条）")
